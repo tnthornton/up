@@ -42,6 +42,8 @@ import (
 	xparser "github.com/crossplane/crossplane-runtime/pkg/parser"
 	xpextv1 "github.com/crossplane/crossplane/apis/apiextensions/v1"
 	pkgmetav1 "github.com/crossplane/crossplane/apis/pkg/meta/v1"
+	pkgmetav1alpha1 "github.com/crossplane/crossplane/apis/pkg/meta/v1"
+	pkgmetav1beta1 "github.com/crossplane/crossplane/apis/pkg/meta/v1"
 
 	"github.com/upbound/up/internal/xpkg"
 	pyaml "github.com/upbound/up/internal/xpkg/parser/yaml"
@@ -331,25 +333,29 @@ func (v *View) parseDoc(ctx context.Context, pCtx parseContext) (NodeIdentifier,
 		pCtx.node = doc.Body
 	}
 
-	switch obj.GetKind() {
-	case xpextv1.CompositeResourceDefinitionKind:
+	switch obj.GroupVersionKind() {
+	case xpextv1.CompositeResourceDefinitionGroupVersionKind:
 		if err := v.parseXRD(pCtx); err != nil {
 			return NodeIdentifier{}, err
 		}
-	case xpextv1.CompositionKind:
+	case xpextv1.CompositionGroupVersionKind:
 		if err := v.parseComposition(ctx, pCtx); err != nil {
 			return NodeIdentifier{}, err
 		}
-	case pkgmetav1.ConfigurationKind:
+	case pkgmetav1.ConfigurationGroupVersionKind,
+		pkgmetav1.ProviderGroupVersionKind,
+		pkgmetav1.FunctionGroupVersionKind,
+		pkgmetav1beta1.ConfigurationGroupVersionKind,
+		pkgmetav1beta1.ProviderGroupVersionKind,
+		pkgmetav1beta1.FunctionGroupVersionKind,
+		pkgmetav1alpha1.ConfigurationGroupVersionKind,
+		pkgmetav1alpha1.ProviderGroupVersionKind,
+		pkgmetav1alpha1.FunctionGroupVersionKind:
 		if err := v.parseMeta(ctx, pCtx); err != nil {
 			return NodeIdentifier{}, err
 		}
-	case pkgmetav1.ProviderKind:
-		if err := v.parseMeta(ctx, pCtx); err != nil {
-			return NodeIdentifier{}, err
-		}
-	case pkgmetav1.FunctionKind:
-		if err := v.parseMeta(ctx, pCtx); err != nil {
+	case projectv1alpha1.ProjectGroupVersionKind:
+		if err := v.parseProject(pCtx); err != nil {
 			return NodeIdentifier{}, err
 		}
 	default:
