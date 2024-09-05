@@ -17,6 +17,7 @@ package v1alpha1
 import (
 	pkgmetav1 "github.com/crossplane/crossplane/apis/pkg/meta/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 // Project defines an Upbound Project, which can be built into a Crossplane
@@ -79,3 +80,9 @@ const (
 	// ProjectKind is the kind of a Project.
 	ProjectKind = "Project"
 )
+
+var ProjectGroupVersionKind = schema.GroupVersionKind{
+	Group:   Group,
+	Version: Version,
+	Kind:    ProjectKind,
+}

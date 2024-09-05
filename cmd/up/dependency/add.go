@@ -72,7 +72,11 @@ func (c *addCmd) AfterApply(kongCtx *kong.Context, p pterm.TextPrinter) error {
 			return err
 		}
 
-		ws, err := workspace.New(wd, workspace.WithFS(fs), workspace.WithPrinter(p))
+		ws, err := workspace.New(wd,
+			workspace.WithFS(fs),
+			workspace.WithPrinter(p),
+			workspace.WithPermissiveParser(),
+		)
 		if err != nil {
 			return err
 		}

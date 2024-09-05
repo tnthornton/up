@@ -46,6 +46,7 @@ import (
 	"github.com/upbound/up/internal/xpkg"
 	pyaml "github.com/upbound/up/internal/xpkg/parser/yaml"
 	"github.com/upbound/up/internal/xpkg/workspace/meta"
+	projectv1alpha1 "github.com/upbound/up/pkg/apis/project/v1alpha1"
 )
 
 // paths to extract GVK and name from objects that conform to Kubernetes
@@ -107,6 +108,9 @@ func New(root string, opts ...Option) (*Workspace, error) {
 			// Default metaLocation to the root. If a pre-existing meta file exists,
 			// metaLocation will be updating accordingly during workspace parse.
 			metaLocation: root,
+			// Default metaPath to crossplane.yaml. If a pre-existing meta file
+			// exists, metaPath will be updated during workspace parse.
+			metaPath:     filepath.Join(root, xpkg.MetaFile),
 			nodes:        make(map[NodeIdentifier]Node),
 			uriToDetails: make(map[span.URI]*Details),
 			xrClaimRefs:  make(map[schema.GroupVersionKind]schema.GroupVersionKind),
@@ -174,7 +178,14 @@ func (w *Workspace) Write(m *meta.Meta) error {
 		return err
 	}
 
-	return afero.WriteFile(w.fs, filepath.Join(w.view.metaLocation, xpkg.MetaFile), b, os.ModePerm)
+	// Keep the permissions on the meta file the same if it already exists.
+	perms := os.FileMode(0644)
+	st, err := w.fs.Stat(w.view.metaPath)
+	if err == nil {
+		perms = st.Mode()
+	}
+
+	return afero.WriteFile(w.fs, w.view.metaPath, b, perms)
 }
 
 // Parse parses the full workspace in order to hydrate the workspace's View.
@@ -493,6 +504,20 @@ func (v *View) parseMeta(ctx context.Context, pCtx parseContext) error {
 	return nil
 }
 
+func (v *View) parseProject(pCtx parseContext) error {
+	var proj projectv1alpha1.Project
+	if err := k8syaml.Unmarshal(pCtx.docBytes, &proj); err != nil {
+		return err
+	}
+
+	v.meta = meta.New(&proj)
+	v.metaPath = pCtx.path
+
+	v.printer.Printf("xpkg loaded project meta information from %s\n", v.relativePath(pCtx.path))
+
+	return nil
+}
+
 func (v *View) parseXRD(ctx parseContext) error {
 	var xrd xpextv1.CompositeResourceDefinition
 	if err := k8syaml.Unmarshal(ctx.docBytes, &xrd); err != nil {
@@ -560,9 +585,14 @@ func (v *View) Meta() *meta.Meta {
 	return v.meta
 }
 
-// MetaLocation returns the meta file's location (on disk) in the current View.
+// MetaLocation returns the meta file's directory (on disk) in the current View.
 func (v *View) MetaLocation() string {
 	return v.metaLocation
+}
+
+// MetaPath returns the path to the meta file in the current View.
+func (v *View) MetaPath() string {
+	return v.metaPath
 }
 
 // Nodes returns the View's Nodes.
