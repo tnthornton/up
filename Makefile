@@ -19,7 +19,7 @@ RELEASE_TARGET ?= debug
 # ====================================================================================
 # Setup Output
 
-S3_BUCKET ?= public-cli.releases
+S3_BUCKET ?= private-cli.releases
 -include build/makelib/output.mk
 
 # ====================================================================================
