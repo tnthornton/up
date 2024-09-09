@@ -29,7 +29,7 @@ const (
 // Accept upserts the "upbound" kubeconfig context and cluster to the chosen
 // kubeconfig, pointing to the space.
 func (s *Space) Accept(upCtx *upbound.Context, navCtx *navContext) (msg string, err error) {
-	config, err := s.buildClient(upCtx, types.NamespacedName{})
+	config, err := s.BuildClient(upCtx, types.NamespacedName{})
 	if err != nil {
 		return "", err
 	}
@@ -47,7 +47,7 @@ func (s *Space) Accept(upCtx *upbound.Context, navCtx *navContext) (msg string, 
 // Accept upserts the "upbound" kubeconfig context and cluster to the chosen
 // kubeconfig, pointing to the group.
 func (g *Group) Accept(upCtx *upbound.Context, navCtx *navContext) (msg string, err error) {
-	config, err := g.Space.buildClient(upCtx, types.NamespacedName{Namespace: g.Name})
+	config, err := g.Space.BuildClient(upCtx, types.NamespacedName{Namespace: g.Name})
 	if err != nil {
 		return "", err
 	}
@@ -64,7 +64,7 @@ func (g *Group) Accept(upCtx *upbound.Context, navCtx *navContext) (msg string, 
 
 // Accept upserts a controlplane context and cluster to the chosen kubeconfig.
 func (ctp *ControlPlane) Accept(upCtx *upbound.Context, navCtx *navContext) (msg string, err error) {
-	config, err := ctp.Group.Space.buildClient(upCtx, ctp.NamespacedName())
+	config, err := ctp.Group.Space.BuildClient(upCtx, ctp.NamespacedName())
 	if err != nil {
 		return "", err
 	}

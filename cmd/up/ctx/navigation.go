@@ -470,7 +470,7 @@ func (s *Space) Breadcrumbs() string {
 
 // GetClient returns a kube client pointed at the current space
 func (s *Space) GetClient(upCtx *upbound.Context) (client.Client, error) {
-	conf, err := s.buildClient(upCtx, types.NamespacedName{})
+	conf, err := s.BuildClient(upCtx, types.NamespacedName{})
 	if err != nil {
 		return nil, err
 	}
@@ -492,7 +492,7 @@ func (s *Space) GetClient(upCtx *upbound.Context) (client.Client, error) {
 // control plane ingress and set the namespace to "default".
 // TODO(redbackthomson): Refactor into smaller methods (one for space-level, one
 // for ctp-level)
-func (s *Space) buildClient(upCtx *upbound.Context, resource types.NamespacedName) (clientcmd.ClientConfig, error) { // nolint:gocyclo
+func (s *Space) BuildClient(upCtx *upbound.Context, resource types.NamespacedName) (clientcmd.ClientConfig, error) { // nolint:gocyclo
 	// reference name for all context, cluster and authinfo for in-memory
 	// kubeconfig
 	ref := "upbound"

@@ -37,6 +37,7 @@ import (
 	"github.com/crossplane/crossplane-runtime/pkg/logging"
 
 	"github.com/upbound/up/internal/install"
+	"github.com/upbound/up/internal/kube"
 )
 
 const (
@@ -259,7 +260,7 @@ func NewManager(config *rest.Config, chartName string, repoURL *url.URL, modifie
 		h.cacheDir = filepath.Join(home, defaultCacheDir)
 	}
 	actionConfig := new(action.Configuration)
-	if err := actionConfig.Init(newRESTClientGetter(config, h.namespace), h.namespace, helmDriverSecret, func(format string, v ...any) {
+	if err := actionConfig.Init(kube.NewRESTClientGetter(config, h.namespace), h.namespace, helmDriverSecret, func(format string, v ...any) {
 		h.log.Debug(fmt.Sprintf(format, v))
 	}); err != nil {
 		return nil, err

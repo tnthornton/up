@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package helm
+package kube
 
 import (
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -28,7 +28,7 @@ type restClientGetter struct {
 	config    *rest.Config
 }
 
-func newRESTClientGetter(config *rest.Config, namespace string) *restClientGetter {
+func NewRESTClientGetter(config *rest.Config, namespace string) *restClientGetter {
 	return &restClientGetter{
 		namespace: namespace,
 		config:    config,
