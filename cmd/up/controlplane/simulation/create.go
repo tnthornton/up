@@ -218,13 +218,9 @@ func (c *createCmd) Run(ctx context.Context, p pterm.TextPrinter, upCtx *upbound
 		}
 	}
 
-	fmt.Printf("\n\n")
-
-	// todo(redbackthomson): Use a different printer for JSON or YAML output
-	buf := &strings.Builder{}
-	writer := diff.NewPrettyPrintWriter(buf)
-	_ = writer.Write(diffSet)
-	fmt.Print(buf.String())
+	if err := c.outputDiff(diffSet); err != nil {
+		return errors.Wrap(err, "failed to write diff to output")
+	}
 
 	switch c.FailOn {
 	case failOnNone:
@@ -424,6 +420,25 @@ func (c *createCmd) createResourceDiffSet(ctx context.Context, config *rest.Conf
 		})
 	}
 	return diffSet, nil
+}
+
+// outputDiff outputs the diff to the location, and in the format, specified by
+// the command line arguments.
+func (c *createCmd) outputDiff(diffSet []diff.ResourceDiff) error {
+	stdout := c.Output == ""
+
+	// todo(redbackthomson): Use a different printer for JSON or YAML output
+	buf := &strings.Builder{}
+	writer := diff.NewPrettyPrintWriter(buf, stdout)
+	_ = writer.Write(diffSet)
+
+	if stdout {
+		fmt.Printf("\n\n")
+		fmt.Print(buf.String())
+		return nil
+	}
+
+	return os.WriteFile(c.Output, []byte(buf.String()), 0o644) // nolint:gosec // nothing system sensitive in the file
 }
 
 // getControlPlaneConfig gets a REST config for a given control plane within

@@ -20,7 +20,6 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/pterm/pterm"
 	diffv3 "github.com/r3labs/diff/v3"
 	"golang.org/x/exp/maps"
 
@@ -36,17 +35,6 @@ const (
 
 	// changeDeleteFmt denotes a deleted resource or field.
 	changeDeleteFmt = "%s[-] %s\n"
-)
-
-const (
-	// changeColorUpdate is the color to use when displaying an updated field.
-	changeColorUpdate = pterm.FgYellow
-
-	// changeColorCreated is the color to use when displaying an created field.
-	changeColorCreate = pterm.FgGreen
-
-	// changeColorDelete is the color to use when displaying an deleted field.
-	changeColorDelete = pterm.FgRed
 )
 
 const (
@@ -76,7 +64,8 @@ type diffWriter interface {
 // prettyPrintWriter implements diffWriter, writing its responses to a buffer that can
 // be sent to stdout.
 type prettyPrintWriter struct {
-	w io.Writer
+	w      io.Writer
+	styles outputStyles
 }
 
 // getLoggedOutputByType returns the value that should be logged by the writer
@@ -107,8 +96,8 @@ func (p *prettyPrintWriter) getLoggedOutputByType(value any) string {
 func (p *prettyPrintWriter) printFieldUpdate(prefix string, change diffv3.Change) {
 	from := p.getLoggedOutputByType(change.From)
 	to := p.getLoggedOutputByType(change.To)
-	fmt.Fprintf(p.w, changeDeleteFmt, prefix+treeSymbolT, changeColorDelete.Sprint(from))
-	fmt.Fprintf(p.w, changeCreateFmt, prefix+treeSymbolL, changeColorCreate.Sprint(to))
+	fmt.Fprintf(p.w, changeDeleteFmt, prefix+treeSymbolT, p.styles.Delete(from))
+	fmt.Fprintf(p.w, changeCreateFmt, prefix+treeSymbolL, p.styles.Create(to))
 }
 
 // printNode recursively writes each value a diff tree node, prefixing values
@@ -163,14 +152,14 @@ func (p *prettyPrintWriter) Write(resources []ResourceDiff) error {
 
 		switch change.SimulationChange.Change { //nolint:exhaustive
 		case spacesv1alpha1.SimulationChangeTypeCreate:
-			fmt.Fprintf(p.w, changeCreateFmt, "", changeColorCreate.Sprint(formatObjectReference(ref)))
+			fmt.Fprintf(p.w, changeCreateFmt, "", p.styles.Create(formatObjectReference(ref)))
 			continue
 		case spacesv1alpha1.SimulationChangeTypeDelete:
-			fmt.Fprintf(p.w, changeDeleteFmt, "", changeColorDelete.Sprint(formatObjectReference(ref)))
+			fmt.Fprintf(p.w, changeDeleteFmt, "", p.styles.Delete(formatObjectReference(ref)))
 			continue
 		}
 
-		fmt.Fprintf(p.w, changeUpdateFmt, "", changeColorUpdate.Sprint(formatObjectReference(ref)))
+		fmt.Fprintf(p.w, changeUpdateFmt, "", p.styles.Update(formatObjectReference(ref)))
 
 		// hide any changes to secrets
 		if change.SimulationChange.ObjectReference.Kind == "Secret" &&
@@ -202,7 +191,7 @@ func (p *prettyPrintWriter) writeSummary(resources []ResourceDiff) {
 		}
 	}
 
-	fmt.Fprintf(p.w, changeSummaryFmt, changeColorCreate.Sprint(created), changeColorUpdate.Sprint(updated), changeColorDelete.Sprint(deleted))
+	fmt.Fprintf(p.w, changeSummaryFmt, p.styles.Create(created), p.styles.Update(updated), p.styles.Delete(deleted))
 	fmt.Fprintf(p.w, "\n\n")
 }
 
@@ -223,8 +212,16 @@ func formatObjectReference(ref spacesv1alpha1.ChangedObjectReference) string {
 
 // NewPrettyPrintWriter creates a new print writer that, when calling `Write()`, will
 // output a pretty-printed table to the writer.
-func NewPrettyPrintWriter(w io.Writer) *prettyPrintWriter {
-	return &prettyPrintWriter{
+func NewPrettyPrintWriter(w io.Writer, styling bool) *prettyPrintWriter {
+	p := &prettyPrintWriter{
 		w: w,
 	}
+
+	if styling {
+		p.styles = NewDefaultTermColors()
+	} else {
+		p.styles = noColors{}
+	}
+
+	return p
 }
