@@ -15,10 +15,14 @@
 package simulation
 
 import (
+	"time"
+
 	"github.com/alecthomas/kong"
 	"github.com/pkg/errors"
+	"k8s.io/apimachinery/pkg/util/duration"
 	kruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	spacesv1alpha1 "github.com/upbound/up-sdk-go/apis/spaces/v1alpha1"
@@ -26,6 +30,11 @@ import (
 
 	"github.com/upbound/up/internal/feature"
 	"github.com/upbound/up/internal/upbound"
+	"github.com/upbound/up/internal/upterm"
+)
+
+var (
+	fieldNames = []string{"GROUP", "NAME", "SOURCE", "SIMULATED", "ACCEPTING-CHANGES", "STATE", "AGE"}
 )
 
 func init() {
@@ -64,6 +73,8 @@ func (c *Cmd) AfterApply(kongCtx *kong.Context) error {
 // Cmd contains commands for interacting with control planes.
 type Cmd struct {
 	Create createCmd `cmd:"" help:"Start a new control plane simulation and wait for the results."`
+	Delete deleteCmd `cmd:"" help:"Delete a control plane simulation."`
+	List   listCmd   `cmd:"" help:"List control plane simulations for the account."`
 
 	// Common Upbound API configuration
 	Flags upbound.Flags `embed:""`
@@ -75,4 +86,38 @@ Manage control plane simulations. Simulations allow you to "simulate" what
 happens on the control plane and see what would changes after the changes are
 applied.
 `
+}
+
+func extractFields(obj any) []string {
+	sim, ok := obj.(spacesv1alpha1.Simulation)
+	if !ok {
+		return []string{"unknown", "unknown", "", "", "", "", ""}
+	}
+
+	simulated := ""
+	if sim.Status.SimulatedControlPlaneName != nil {
+		simulated = *sim.Status.SimulatedControlPlaneName
+	}
+
+	return []string{
+		sim.GetNamespace(),
+		sim.GetName(),
+		sim.Spec.ControlPlaneName,
+		simulated,
+		string(sim.Status.GetCondition(spacesv1alpha1.TypeAcceptingChanges).Status),
+		string(sim.Status.GetCondition(spacesv1alpha1.TypeAcceptingChanges).Reason),
+		formatAge(ptr.To(time.Since(sim.CreationTimestamp.Time))),
+	}
+}
+
+func formatAge(age *time.Duration) string {
+	if age == nil {
+		return ""
+	}
+
+	return duration.HumanDuration(*age)
+}
+
+func tabularPrint(obj any, printer upterm.ObjectPrinter) error {
+	return printer.Print(obj, fieldNames, extractFields)
 }
