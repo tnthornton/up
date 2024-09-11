@@ -150,7 +150,6 @@ func (o *OpenTelemetryCollectorOperator) waitUntilReady() error {
 		if podutils.IsPodReady(&pods.Items[0]) {
 			return true, nil
 		}
-		pterm.Info.Println("Waiting for opentelemetry-operator pod to get ready...")
 		return false, nil
 	}), "failed to wait for opentelemetry-operator pod to be ready")
 }

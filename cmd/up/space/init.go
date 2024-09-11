@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"time"
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/alecthomas/kong"
@@ -75,8 +74,6 @@ var (
 )
 
 const (
-	defaultTimeout = 30 * time.Second
-
 	defaultImagePullSecret = "upbound-pull-secret"
 	ns                     = "upbound-system"
 
@@ -269,7 +266,7 @@ func (c *initCmd) Run(ctx context.Context, upCtx *upbound.Context) error { //nol
 				return nil
 			}
 		}
-		if err := c.installPrereqs(status); err != nil {
+		if err := installPrereqs(status); err != nil {
 			return err
 		}
 	}
@@ -284,7 +281,6 @@ func (c *initCmd) Run(ctx context.Context, upCtx *upbound.Context) error { //nol
 	if err := c.deploySpace(ctx, c.helmParams); err != nil {
 		return err
 	}
-
 	pterm.Info.WithPrefix(upterm.RaisedPrefix).Println("Your Upbound Space is Ready!")
 
 	outputNextSteps()
@@ -292,7 +288,7 @@ func (c *initCmd) Run(ctx context.Context, upCtx *upbound.Context) error { //nol
 	return nil
 }
 
-func (c *initCmd) installPrereqs(status *prerequisites.Status) error {
+func installPrereqs(status *prerequisites.Status) error {
 	for i, p := range status.NotInstalled {
 		if err := upterm.WrapWithSuccessSpinner(
 			upterm.StepCounter(
@@ -381,8 +377,8 @@ func (c *initCmd) deploySpace(ctx context.Context, params map[string]any) error 
 		upterm.CheckmarkSuccessSpinner,
 		install,
 	); err != nil {
-		fmt.Println()
-		fmt.Println()
+		pterm.Println()
+		pterm.Println()
 		return err
 	}
 
