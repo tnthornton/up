@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 
@@ -43,7 +42,6 @@ import (
 	"github.com/golang/tools/lsp/protocol"
 	"github.com/golang/tools/span"
 
-	"github.com/upbound/up/internal/xpkg"
 	"github.com/upbound/up/internal/xpkg/dep/cache"
 	"github.com/upbound/up/internal/xpkg/dep/manager"
 	mxpkg "github.com/upbound/up/internal/xpkg/dep/marshaler/xpkg"
@@ -423,7 +421,7 @@ func (s *Snapshot) ValidateMeta(ctx context.Context) (span.URI, []protocol.Diagn
 		// nothing to do here, there is no crossplane.yaml in this snapshot
 		return "", nil, os.ErrNotExist
 	}
-	uri := span.URIFromPath(filepath.Join(s.wsview.MetaLocation(), xpkg.MetaFile))
+	uri := span.URIFromPath(s.wsview.MetaPath())
 	diags, _ := s.Validate(ctx, uri)
 	return uri, diags, nil
 }

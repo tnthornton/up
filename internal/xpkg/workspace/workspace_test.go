@@ -19,7 +19,6 @@ import (
 	"context"
 	"io"
 	"os"
-	"path/filepath"
 	"syscall"
 	"testing"
 
@@ -35,7 +34,6 @@ import (
 	xpextv1 "github.com/crossplane/crossplane/apis/apiextensions/v1"
 	metav1 "github.com/crossplane/crossplane/apis/pkg/meta/v1"
 
-	"github.com/upbound/up/internal/xpkg"
 	"github.com/upbound/up/internal/xpkg/parser/yaml"
 	"github.com/upbound/up/internal/xpkg/workspace/meta"
 )
@@ -322,7 +320,7 @@ func TestRWMetaFile(t *testing.T) {
 			}
 
 			// read meta file
-			pkgBytes, err := afero.ReadFile(ws.fs, filepath.Join(ws.root, xpkg.MetaFile))
+			pkgBytes, err := afero.ReadFile(ws.fs, ws.view.metaPath)
 			if diff := cmp.Diff(tc.want.readErr, err, test.EquateErrors()); diff != "" {
 				t.Errorf("\n%s\nRWMetaFile(...): -want err, +got err:\n%s", tc.reason, diff)
 			}

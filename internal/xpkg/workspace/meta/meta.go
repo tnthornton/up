@@ -29,6 +29,7 @@ import (
 
 	"github.com/upbound/up/internal/xpkg/dep/manager"
 	"github.com/upbound/up/internal/xpkg/scheme"
+	projectv1alpha1 "github.com/upbound/up/pkg/apis/project/v1alpha1"
 )
 
 const (
@@ -54,7 +55,12 @@ func New(obj runtime.Object) *Meta {
 
 // DependsOn returns a slice of v1beta1.Dependency that this workspace depends on.
 func (m *Meta) DependsOn() ([]v1beta1.Dependency, error) {
-	pkg, ok := scheme.TryConvertToPkg(m.obj, &pkgmetav1.Provider{}, &pkgmetav1.Configuration{}, &pkgmetav1.Function{})
+	pkg, ok := scheme.TryConvertToPkg(m.obj,
+		&pkgmetav1.Provider{},
+		&pkgmetav1.Configuration{},
+		&pkgmetav1.Function{},
+		&projectv1alpha1.Project{},
+	)
 	if !ok {
 		return nil, errors.New(errUnsupportedPackageVersion)
 	}
@@ -87,23 +93,10 @@ func (m *Meta) Bytes() ([]byte, error) {
 
 	// (@tnthornton) workaround for `creationTimestamp: null` in marshaled result.
 	// see https://github.com/kubernetes/kubernetes/pull/104857 for inspiration
-	t := apimetav1.Time{}
 
-	switch v := m.obj.(type) {
-	case *pkgmetav1alpha1.Configuration:
-		t = v.GetCreationTimestamp()
-	case *pkgmetav1.Configuration:
-		t = v.GetCreationTimestamp()
-	case *pkgmetav1alpha1.Provider:
-		t = v.GetCreationTimestamp()
-	case *pkgmetav1.Provider:
-		t = v.GetCreationTimestamp()
-	case *pkgmetav1beta1.Function:
-		t = v.GetCreationTimestamp()
-	case *pkgmetav1.Function:
-		t = v.GetCreationTimestamp()
-	default:
-		return nil, errors.New(errInvalidMetaFile)
+	t := apimetav1.Time{}
+	if tobj, ok := m.obj.(interface{ GetCreationTimestamp() apimetav1.Time }); ok {
+		t = tobj.GetCreationTimestamp()
 	}
 
 	if t.Equal(&apimetav1.Time{}) {
@@ -121,7 +114,12 @@ func (m *Meta) Bytes() ([]byte, error) {
 // be converted to a v1.Pkg and returns an updated runtime.Object with a slice
 // of dependencies that includes the provided dependency d.
 func upsertDeps(d v1beta1.Dependency, o runtime.Object) error { // nolint:gocyclo
-	p, ok := scheme.TryConvertToPkg(o, &pkgmetav1.Provider{}, &pkgmetav1.Configuration{}, &pkgmetav1.Function{})
+	p, ok := scheme.TryConvertToPkg(o,
+		&pkgmetav1.Provider{},
+		&pkgmetav1.Configuration{},
+		&pkgmetav1.Function{},
+		&projectv1alpha1.Project{},
+	)
 	if !ok {
 		return errors.New(errUnsupportedPackageVersion)
 	}
@@ -183,6 +181,8 @@ func upsertDeps(d v1beta1.Dependency, o runtime.Object) error { // nolint:gocycl
 	case *pkgmetav1beta1.Function:
 		v.Spec.DependsOn = convertToV1beta1(deps)
 	case *pkgmetav1.Function:
+		v.Spec.DependsOn = deps
+	case *projectv1alpha1.Project:
 		v.Spec.DependsOn = deps
 	}
 

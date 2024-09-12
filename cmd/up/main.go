@@ -111,7 +111,7 @@ type cli struct {
 
 	// Develop with Crossplane
 	Project    project.Cmd    `cmd:"" group:"Develop with Crossplane" help:"Manage Upbound development projects."`
-	Dependency dependency.Cmd `cmd:"" group:"Develop with Crossplane" help:"Manage configuration dependencies."`
+	Dependency dependency.Cmd `cmd:"" group:"Develop with Crossplane" aliases:"dep" help:"Manage configuration dependencies."`
 	XRD        xrd.Cmd        `cmd:"" group:"Develop with Crossplane" help:"Manage XRDs from Composite Resources or Claims."`
 	Local      local.Cmd      `cmd:"" group:"Develop with Crossplane" help:"Interact with a local development control plane."`
 	XPKG       xpkg.Cmd       `cmd:"" group:"Develop with Crossplane" help:"Package configurations, functions, and providers for distribution."`
