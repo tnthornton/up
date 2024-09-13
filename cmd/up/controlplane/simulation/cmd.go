@@ -72,7 +72,7 @@ func (c *Cmd) AfterApply(kongCtx *kong.Context) error {
 
 // Cmd contains commands for interacting with control planes.
 type Cmd struct {
-	Create createCmd `cmd:"" help:"Start a new control plane simulation and wait for the results."`
+	Create CreateCmd `cmd:"" help:"Start a new control plane simulation and wait for the results."`
 	Delete deleteCmd `cmd:"" help:"Delete a control plane simulation."`
 	List   listCmd   `cmd:"" help:"List control plane simulations for the account."`
 

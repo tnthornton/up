@@ -111,7 +111,8 @@ type Cmd struct {
 
 	Connector connector.Cmd `cmd:"" help:"Connect an App Cluster to a managed control plane."`
 
-	Simulation simulation.Cmd `cmd:"" maturity:"alpha" aliases:"sim" help:"Manage control plane simulations."`
+	Simulation simulation.Cmd       `cmd:"" maturity:"alpha" aliases:"sim" help:"Manage control plane simulations."`
+	Simulate   simulation.CreateCmd `cmd:"" maturity:"alpha" help:"Alias for 'up controlplane simulation create'."`
 
 	Configuration pkg.Cmd `cmd:"" set:"package_type=Configuration" help:"Manage Configurations."`
 	Provider      pkg.Cmd `cmd:"" set:"package_type=Provider" help:"Manage Providers."`
@@ -128,9 +129,8 @@ type Cmd struct {
 
 func (c *Cmd) Help() string {
 	return `
-Interact with control planes of the current profile. Both Upbound profiles and
-local Spaces are supported. Use the "profile" management command to switch
-between different Upbound profiles or to connect to a local Space.`
+Interact with control planes of the current profile. Use the "up ctx" command to
+connect to a space or switch between contexts within a space.`
 }
 
 func extractSpaceFields(obj any) []string {

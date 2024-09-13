@@ -85,9 +85,9 @@ var (
 	failOnDifference failOnCondition = "difference"
 )
 
-// createCmd creates a control plane simulation and outputs the differences
+// CreateCmd creates a control plane simulation and outputs the differences
 // detected.
-type createCmd struct {
+type CreateCmd struct {
 	SourceName string `arg:"" required:"" help:"Name of source control plane."`
 	Group      string `short:"g" default:"" help:"The control plane group that the control plane is contained in. This defaults to the group specified in the current context"`
 
@@ -104,7 +104,7 @@ type createCmd struct {
 }
 
 // Validate performs custom argument validation for the create command.
-func (c *createCmd) Validate() error {
+func (c *CreateCmd) Validate() error {
 	if c.TerminateOnFinish && !c.Wait {
 		return errors.New("--wait=true is required when using --terminate-on-finish=true")
 	}
@@ -122,7 +122,7 @@ func (c *createCmd) Validate() error {
 }
 
 // AfterApply sets default values in command after assignment and validation.
-func (c *createCmd) AfterApply(kongCtx *kong.Context, upCtx *upbound.Context) error {
+func (c *CreateCmd) AfterApply(kongCtx *kong.Context, upCtx *upbound.Context) error {
 	pterm.EnableStyling()
 	upterm.DefaultObjPrinter.Pretty = true
 
@@ -138,7 +138,7 @@ func (c *createCmd) AfterApply(kongCtx *kong.Context, upCtx *upbound.Context) er
 }
 
 // Run executes the create command.
-func (c *createCmd) Run(ctx context.Context, p pterm.TextPrinter, upCtx *upbound.Context, spacesClient client.Client) error { // nolint:gocyclo
+func (c *CreateCmd) Run(ctx context.Context, p pterm.TextPrinter, upCtx *upbound.Context, spacesClient client.Client) error { // nolint:gocyclo
 	var srcCtp spacesv1beta1.ControlPlane
 	if err := spacesClient.Get(ctx, types.NamespacedName{Name: c.SourceName, Namespace: c.Group}, &srcCtp); err != nil {
 		if kerrors.IsNotFound(err) {
@@ -235,7 +235,7 @@ func (c *createCmd) Run(ctx context.Context, p pterm.TextPrinter, upCtx *upbound
 }
 
 // createSimulation creates a new simulation object.
-func (c *createCmd) createSimulation(ctx context.Context, client client.Client) (*spacesv1alpha1.Simulation, error) {
+func (c *CreateCmd) createSimulation(ctx context.Context, client client.Client) (*spacesv1alpha1.Simulation, error) {
 	sim := &spacesv1alpha1.Simulation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      c.SimulationName,
@@ -267,7 +267,7 @@ func (c *createCmd) createSimulation(ctx context.Context, client client.Client) 
 
 // waitForSimulationAcceptingChangesStep pauses until the given simulation is
 // able to accept changes, or times out.
-func (c *createCmd) waitForSimulationAcceptingChangesStep(ctx context.Context, sim *spacesv1alpha1.Simulation, client client.Client) func() error {
+func (c *CreateCmd) waitForSimulationAcceptingChangesStep(ctx context.Context, sim *spacesv1alpha1.Simulation, client client.Client) func() error {
 	return func() error {
 		if err := wait.For(func(ctx context.Context) (bool, error) {
 			if err := client.Get(ctx, types.NamespacedName{Name: sim.Name, Namespace: sim.Namespace}, sim); err != nil {
@@ -283,7 +283,7 @@ func (c *createCmd) waitForSimulationAcceptingChangesStep(ctx context.Context, s
 
 // waitForSimulationCompleteStep pauses until the given simulation has been
 // marked as complete.
-func (c *createCmd) waitForSimulationCompleteStep(ctx context.Context, sim *spacesv1alpha1.Simulation, client client.Client) func() error {
+func (c *CreateCmd) waitForSimulationCompleteStep(ctx context.Context, sim *spacesv1alpha1.Simulation, client client.Client) func() error {
 	return func() error {
 		if err := wait.For(func(ctx context.Context) (bool, error) {
 			if err := client.Get(ctx, types.NamespacedName{Name: sim.Name, Namespace: sim.Namespace}, sim); err != nil {
@@ -301,7 +301,7 @@ func (c *createCmd) waitForSimulationCompleteStep(ctx context.Context, sim *spac
 }
 
 // terminateSimulation marks the simulation as terminated.
-func (c *createCmd) terminateSimulation(ctx context.Context, sim *spacesv1alpha1.Simulation, client client.Client) func() error {
+func (c *CreateCmd) terminateSimulation(ctx context.Context, sim *spacesv1alpha1.Simulation, client client.Client) func() error {
 	return func() error {
 		sim.Spec.DesiredState = spacesv1alpha1.SimulationStateTerminated
 		if err := client.Update(ctx, sim); err != nil {
@@ -313,7 +313,7 @@ func (c *createCmd) terminateSimulation(ctx context.Context, sim *spacesv1alpha1
 
 // applyChangesetStep loads the changeset resources specified in the argument
 // and applies them to the control plane.
-func (c *createCmd) applyChangesetStep(config *rest.Config) func() error {
+func (c *CreateCmd) applyChangesetStep(config *rest.Config) func() error {
 	return func() error {
 		getter := kube.NewRESTClientGetter(config, "")
 
@@ -333,7 +333,7 @@ func (c *createCmd) applyChangesetStep(config *rest.Config) func() error {
 }
 
 // removeFieldsForDiff removes any fields that should be excluded from the diff.
-func (c *createCmd) removeFieldsForDiff(u *unstructured.Unstructured) {
+func (c *CreateCmd) removeFieldsForDiff(u *unstructured.Unstructured) {
 	xpmeta.RemoveAnnotations(u,
 		annotationKeyClonedState,
 		"kubectl.kubernetes.io/last-applied-configuration",
@@ -345,7 +345,7 @@ func (c *createCmd) removeFieldsForDiff(u *unstructured.Unstructured) {
 // status and looks up the difference between the initial version of the
 // resource and the version currently in the API server (at the time of the
 // function call).
-func (c *createCmd) createResourceDiffSet(ctx context.Context, config *rest.Config, changes []spacesv1alpha1.SimulationChange) ([]diff.ResourceDiff, error) { // nolint:gocyclo
+func (c *CreateCmd) createResourceDiffSet(ctx context.Context, config *rest.Config, changes []spacesv1alpha1.SimulationChange) ([]diff.ResourceDiff, error) { // nolint:gocyclo
 	lookup, err := kube.NewDiscoveryResourceLookup(config)
 	if err != nil {
 		return []diff.ResourceDiff{}, errors.Wrap(err, "unable to create resource lookup client")
@@ -424,7 +424,7 @@ func (c *createCmd) createResourceDiffSet(ctx context.Context, config *rest.Conf
 
 // outputDiff outputs the diff to the location, and in the format, specified by
 // the command line arguments.
-func (c *createCmd) outputDiff(diffSet []diff.ResourceDiff) error {
+func (c *CreateCmd) outputDiff(diffSet []diff.ResourceDiff) error {
 	stdout := c.Output == ""
 
 	// todo(redbackthomson): Use a different printer for JSON or YAML output
