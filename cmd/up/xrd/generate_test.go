@@ -16,8 +16,10 @@ package xrd
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
+	"github.com/crossplane/crossplane-runtime/pkg/errors"
 	v1 "github.com/crossplane/crossplane/apis/apiextensions/v1"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -30,6 +32,7 @@ import (
 func TestInferProperty(t *testing.T) {
 	type want struct {
 		output extv1.JSONSchemaProps
+		err    error
 	}
 
 	cases := map[string]struct {
@@ -40,24 +43,28 @@ func TestInferProperty(t *testing.T) {
 			input: "hello",
 			want: want{
 				output: extv1.JSONSchemaProps{Type: "string"},
+				err:    nil,
 			},
 		},
 		"IntegerType": {
 			input: 42,
 			want: want{
 				output: extv1.JSONSchemaProps{Type: "integer"},
+				err:    nil,
 			},
 		},
 		"FloatType": {
 			input: 3.14,
 			want: want{
 				output: extv1.JSONSchemaProps{Type: "number"},
+				err:    nil,
 			},
 		},
 		"BooleanType": {
 			input: true,
 			want: want{
 				output: extv1.JSONSchemaProps{Type: "boolean"},
+				err:    nil,
 			},
 		},
 		"ObjectType": {
@@ -71,6 +78,7 @@ func TestInferProperty(t *testing.T) {
 						"key": {Type: "string"},
 					},
 				},
+				err: nil,
 			},
 		},
 		"ArrayTypeWithElements": {
@@ -82,6 +90,7 @@ func TestInferProperty(t *testing.T) {
 						Schema: &extv1.JSONSchemaProps{Type: "string"},
 					},
 				},
+				err: nil,
 			},
 		},
 		"ArrayTypeEmpty": {
@@ -93,20 +102,38 @@ func TestInferProperty(t *testing.T) {
 						Schema: &extv1.JSONSchemaProps{Type: "object"},
 					},
 				},
+				err: nil,
 			},
 		},
 		"UnknownType": {
 			input: nil,
 			want: want{
 				output: extv1.JSONSchemaProps{Type: "string"},
+				err:    nil,
+			},
+		},
+		"ArrayWithMixedTypes": {
+			input: []interface{}{1, "2", true},
+			want: want{
+				output: extv1.JSONSchemaProps{},
+				err:    errors.New("mixed types detected in array"),
 			},
 		},
 	}
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			got := inferProperty(tc.input)
+			got, err := inferProperty(tc.input)
 
+			// Compare errors
+			if err != nil || tc.want.err != nil {
+				if err == nil || tc.want.err == nil || err.Error() != tc.want.err.Error() {
+					t.Errorf("inferProperty() error = %v, wantErr %v", err, tc.want.err)
+				}
+				return
+			}
+
+			// Compare the output
 			if diff := cmp.Diff(got, tc.want.output); diff != "" {
 				t.Errorf("inferProperty() -got, +want:\n%s", diff)
 			}
@@ -118,6 +145,7 @@ func TestInferProperty(t *testing.T) {
 func TestInferProperties(t *testing.T) {
 	type want struct {
 		output map[string]extv1.JSONSchemaProps
+		err    error
 	}
 
 	cases := map[string]struct {
@@ -134,6 +162,7 @@ func TestInferProperties(t *testing.T) {
 					"key1": {Type: "string"},
 					"key2": {Type: "integer"},
 				},
+				err: nil,
 			},
 		},
 		"NestedObject": {
@@ -151,6 +180,7 @@ func TestInferProperties(t *testing.T) {
 						},
 					},
 				},
+				err: nil,
 			},
 		},
 		"ArrayInObject": {
@@ -166,14 +196,33 @@ func TestInferProperties(t *testing.T) {
 						},
 					},
 				},
+				err: nil,
+			},
+		},
+		"ObjectWithMixedArray": {
+			input: map[string]interface{}{
+				"array": []interface{}{1, "2"},
+			},
+			want: want{
+				output: nil,
+				err:    errors.New("error inferring property for key 'array': mixed types detected in array"),
 			},
 		},
 	}
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			got := inferProperties(tc.input)
+			got, err := inferProperties(tc.input)
 
+			// Compare errors
+			if err != nil || tc.want.err != nil {
+				if err == nil || tc.want.err == nil || err.Error() != tc.want.err.Error() {
+					t.Errorf("inferProperties() error = %v, wantErr %v", err, tc.want.err)
+				}
+				return
+			}
+
+			// Compare the output
 			if diff := cmp.Diff(got, tc.want.output); diff != "" {
 				t.Errorf("inferProperties() -got, +want:\n%s", diff)
 			}
@@ -541,18 +590,67 @@ status:
 				err: nil,
 			},
 		},
+		"MixedTypesInArray": {
+			inputYAML: `
+apiVersion: aws.u5d.io/v1
+kind: MyClaim
+metadata:
+  name: my-claim
+spec:
+  parameters:
+    - 1
+    - "2"
+    - true
+`,
+			customPlural: "myclaims",
+			want: want{
+				xrd: nil,
+				err: errors.New("failed to infer properties for spec: error inferring property for key 'parameters': mixed types detected in array"),
+			},
+		},
+		"NestedMixedTypesInArray": {
+			inputYAML: `
+apiVersion: aws.u5d.io/v1
+kind: MyClaim
+metadata:
+  name: my-claim
+spec:
+  parameters:
+    chris:
+      - 1
+      - "2"
+      - true
+`,
+			customPlural: "myclaims",
+			want: want{
+				xrd: nil,
+				err: errors.New("failed to infer properties for spec: error inferring property for key 'parameters': error inferring properties for object: error inferring property for key 'chris': mixed types detected in array"),
+			},
+		},
 	}
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			got, err := newXRD([]byte(tc.inputYAML), tc.customPlural)
 
-			if diff := cmp.Diff(got, tc.want.xrd, cmpopts.IgnoreFields(extv1.JSONSchemaProps{}, "Required")); diff != "" {
-				t.Errorf("newXRD() -got, +want:\n%s", diff)
+			// Compare error messages as strings, trimming whitespace for safety
+			gotErrMsg := ""
+			wantErrMsg := ""
+
+			if err != nil {
+				gotErrMsg = strings.TrimSpace(err.Error())
+			}
+			if tc.want.err != nil {
+				wantErrMsg = strings.TrimSpace(tc.want.err.Error())
 			}
 
-			if diff := cmp.Diff(err, tc.want.err, cmpopts.EquateErrors()); diff != "" {
-				t.Errorf("newXRD() error -got, +want:\n%s", diff)
+			if gotErrMsg != wantErrMsg {
+				t.Errorf("newXRD() error - got: %q, want: %q", gotErrMsg, wantErrMsg)
+			}
+
+			// Compare the output XRD (ignoring "Required" field for simplicity)
+			if diff := cmp.Diff(got, tc.want.xrd, cmpopts.IgnoreFields(extv1.JSONSchemaProps{}, "Required")); diff != "" {
+				t.Errorf("newXRD() -got, +want:\n%s", diff)
 			}
 		})
 	}
