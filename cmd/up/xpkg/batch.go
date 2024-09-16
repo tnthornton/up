@@ -155,7 +155,7 @@ func (c *batchCmd) Run(ctx context.Context, p pterm.TextPrinter, upCtx *upbound.
 	}
 	for _, s := range c.SmallerProviders {
 		s := s
-		go func() {
+		go func() { //nolint:contextcheck
 			// if concurrency is limited
 			if c.Concurrency != 0 {
 				<-concurrency
