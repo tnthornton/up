@@ -16,6 +16,7 @@ package project
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,7 +43,38 @@ type initCmd struct {
 	Method   string `default:"https" help:"Specify the method to access the repository: 'https' or 'ssh'."`
 	SshKey   string `help:"Optional. Specify an SSH key for authentication when initializing the new package. Used when method is 'ssh'."`
 	Username string `default:"git" help:"Optional. Specify a username for HTTP(S) authentication. Used when the method is 'https' and an SSH key is not provided."`
-	Password string `help:"Optional. Specify a password for HTTP(S) authentication. Used along with the username when the method is 'https'."`
+	Password string `help:"Optional. Specify a password for authentication. Used with the username when the method is 'https', or with an SSH key that requires a password when the method is 'ssh'."`
+}
+
+func (c *initCmd) Help() string {
+	tpl := `
+This command initializes a new project using a specified template. You can use any Git repository as the template source.
+
+You can specify the template by providing either a full Git URL or a well-known template name. The following well-known template names are supported:
+
+%s
+
+Examples:
+
+  # Initialize a new project using a public template repository:
+  up project init --template="project-template" example-project
+
+  # Initialize a new project from a private template using Git token authentication:
+  up project init --template="https://github.com/example/private-template.git" --method=https --username="<username>" --password="<token>" example-project
+
+  # Initialize a new project from a private template using SSH authentication:
+  up project init --template="git@github.com:upbound/project-template.git" --method=ssh --ssh-key=/Users/username/.ssh/id_rsa example-project
+
+  # Initialize a new project from a private template using SSH authentication with an SSH key password:
+  up project init --template="git@github.com:upbound/project-template.git" --method=ssh --ssh-key=/Users/username/.ssh/id_rsa --password="<ssh-key-password>" example-project
+`
+
+	b := strings.Builder{}
+	for name, url := range wellKnownTemplates() {
+		b.WriteString(fmt.Sprintf(" - %s (%s)\n", name, url))
+	}
+
+	return fmt.Sprintf(tpl, b.String())
 }
 
 // wellKnownTemplates are short aliases for template repositories.
