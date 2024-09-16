@@ -121,13 +121,43 @@ func (c *generateCmd) Run(ctx context.Context, p pterm.TextPrinter) error { // n
 	return nil
 }
 
-// newXRD to create a new CompositeResourceDefinition
 // newXRD to create a new CompositeResourceDefinition and fail if inferProperties fails
 func newXRD(yamlData []byte, customPlural string) (*v1.CompositeResourceDefinition, error) { // nolint:gocyclo
 	var input inputYAML
 	err := yaml.Unmarshal(yamlData, &input)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to unmarshal YAML")
+	}
+
+	// Ensure only allowed top-level keys: apiVersion, kind, metadata, spec, and status
+	var topLevelKeys map[string]interface{}
+	err = yaml.Unmarshal(yamlData, &topLevelKeys)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to unmarshal YAML to check top-level keys")
+	}
+	for key := range topLevelKeys {
+		if key != "apiVersion" && key != "kind" && key != "metadata" && key != "spec" && key != "status" {
+			return nil, errors.New("invalid manifest: only apiVersion, kind, metadata, spec, and status are allowed as top-level keys")
+		}
+	}
+
+	if input.APIVersion == "" {
+		return nil, errors.New("invalid manifest: apiVersion is required")
+	}
+
+	// Check if apiVersion contains exactly one slash (/) to ensure it's in "group/version" format
+	if strings.Count(input.APIVersion, "/") != 1 {
+		return nil, errors.New("invalid manifest: apiVersion must be in the format group/version")
+	}
+
+	if input.Kind == "" {
+		return nil, errors.New("invalid manifest: kind is required")
+	}
+	if input.Name == "" {
+		return nil, errors.New("invalid manifest: metadata.name is required")
+	}
+	if input.Spec == nil {
+		return nil, errors.New("invalid manifest: spec is required")
 	}
 
 	gv, err := schema.ParseGroupVersion(input.APIVersion)

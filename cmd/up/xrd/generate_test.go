@@ -627,6 +627,112 @@ spec:
 				err: errors.New("failed to infer properties for spec: error inferring property for key 'parameters': error inferring properties for object: error inferring property for key 'chris': mixed types detected in array"),
 			},
 		},
+		"MissingAPIVersion": {
+			inputYAML: `
+kind: Postgres
+metadata:
+  name: test
+spec:
+  parameters:
+    version: "13"
+`,
+			customPlural: "postgreses",
+			want: want{
+				xrd: nil,
+				err: errors.New("invalid manifest: apiVersion is required"),
+			},
+		},
+		"MissingAPIVersionVersion": {
+			inputYAML: `
+apiVersion: database.u5d.io
+kind: Postgres
+metadata:
+  name: test
+spec:
+  parameters:
+    version: "13"
+`,
+			customPlural: "postgreses",
+			want: want{
+				xrd: nil,
+				err: errors.New("invalid manifest: apiVersion must be in the format group/version"),
+			},
+		},
+		"MissingKind": {
+			inputYAML: `
+apiVersion: database.u5d.io/v1
+metadata:
+  name: test
+spec:
+  parameters:
+    version: "13"
+`,
+			customPlural: "postgreses",
+			want: want{
+				xrd: nil,
+				err: errors.New("invalid manifest: kind is required"),
+			},
+		},
+		"MissingMetadataName": {
+			inputYAML: `
+apiVersion: database.u5d.io/v1
+kind: Postgres
+spec:
+  parameters:
+    version: "13"
+`,
+			customPlural: "postgreses",
+			want: want{
+				xrd: nil,
+				err: errors.New("invalid manifest: metadata.name is required"),
+			},
+		},
+		"MissingSpec": {
+			inputYAML: `
+apiVersion: database.u5d.io/v1
+kind: Postgres
+metadata:
+  name: test
+`,
+			customPlural: "postgreses",
+			want: want{
+				xrd: nil,
+				err: errors.New("invalid manifest: spec is required"),
+			},
+		},
+		"InvalidTopLevelKey": {
+			inputYAML: `
+apiVersion: database.u5d.io/v1
+kind: Postgres
+metadata:
+  name: test
+spec:
+  parameters:
+    version: "13"
+invalidKey: shouldNotBeHere
+`,
+			customPlural: "postgreses",
+			want: want{
+				xrd: nil,
+				err: errors.New("invalid manifest: only apiVersion, kind, metadata, spec, and status are allowed as top-level keys"),
+			},
+		},
+		"InvalidAPIVersionMultipleSlashes": {
+			inputYAML: `
+apiVersion: invalid/group/version/v1
+kind: InvalidResource
+metadata:
+  name: test
+spec:
+  parameters:
+    key: value
+`,
+			customPlural: "invalidresources",
+			want: want{
+				xrd: nil,
+				err: errors.New("invalid manifest: apiVersion must be in the format group/version"),
+			},
+		},
 	}
 
 	for name, tc := range cases {
