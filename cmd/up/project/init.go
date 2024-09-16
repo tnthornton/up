@@ -37,7 +37,7 @@ import (
 type initCmd struct {
 	Name      string `arg:"" help:"The name of the new project to initialize."`
 	Template  string `default:"project-template" help:"The template name or URL to use to initialize the new project."`
-	Directory string `default:"." help:"The directory to initialize. It must be empty. It will be created if it doesn't exist." type:"path"`
+	Directory string `help:"The directory to initialize. It must be empty. It will be created if it doesn't exist." type:"path"`
 	RefName   string `default:"main" help:"The branch or tag to clone from the template repository." name:"ref-name"`
 
 	Method   string `default:"https" help:"Specify the method to access the repository: 'https' or 'ssh'."`
@@ -86,6 +86,11 @@ func wellKnownTemplates() map[string]string {
 }
 
 func (c *initCmd) Run(ctx context.Context, p pterm.TextPrinter) error { // nolint:gocyclo
+	// use name as directory
+	if c.Directory == "" {
+		c.Directory = c.Name
+	}
+
 	// Validation: Ensure that the method is either "ssh" or "https"
 	if c.Method != "ssh" && c.Method != "https" {
 		return errors.New("invalid method specified; must be either 'ssh' or 'https'")
