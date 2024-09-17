@@ -27,6 +27,7 @@ import (
 func TestNew(t *testing.T) {
 	providerAws := "crossplane/provider-aws"
 	functionTest := "crossplane-contrib/function-test"
+	privateProviderAws := "hostname:8443/crossplane/provider-aws"
 
 	type args struct {
 		pkg string
@@ -68,7 +69,7 @@ func TestNew(t *testing.T) {
 				},
 			},
 		},
-		"VersionSupplied": {
+		"VersionSuppliedAt": {
 			args: args{
 				pkg: fmt.Sprintf("%s@%s", providerAws, "v1.0.0"),
 				t:   "provider",
@@ -81,7 +82,7 @@ func TestNew(t *testing.T) {
 				},
 			},
 		},
-		"VersionConstraintSupplied": {
+		"VersionConstraintSuppliedAt": {
 			args: args{
 				pkg: fmt.Sprintf("%s@%s", providerAws, ">=v1.0.0"),
 				t:   "configuration",
@@ -89,6 +90,45 @@ func TestNew(t *testing.T) {
 			want: want{
 				dep: v1beta1.Dependency{
 					Package:     providerAws,
+					Type:        v1beta1.ConfigurationPackageType,
+					Constraints: ">=v1.0.0",
+				},
+			},
+		},
+		"VersionSuppliedColon": {
+			args: args{
+				pkg: fmt.Sprintf("%s:%s", providerAws, "v1.0.0"),
+				t:   "provider",
+			},
+			want: want{
+				dep: v1beta1.Dependency{
+					Package:     providerAws,
+					Type:        v1beta1.ProviderPackageType,
+					Constraints: "v1.0.0",
+				},
+			},
+		},
+		"VersionConstraintSuppliedColon": {
+			args: args{
+				pkg: fmt.Sprintf("%s:%s", providerAws, ">=v1.0.0"),
+				t:   "configuration",
+			},
+			want: want{
+				dep: v1beta1.Dependency{
+					Package:     providerAws,
+					Type:        v1beta1.ConfigurationPackageType,
+					Constraints: ">=v1.0.0",
+				},
+			},
+		},
+		"PrivateRegistryAndVersionSuppliedColon": {
+			args: args{
+				pkg: fmt.Sprintf("%s:%s", privateProviderAws, ">=v1.0.0"),
+				t:   "configuration",
+			},
+			want: want{
+				dep: v1beta1.Dependency{
+					Package:     privateProviderAws,
 					Type:        v1beta1.ConfigurationPackageType,
 					Constraints: ">=v1.0.0",
 				},

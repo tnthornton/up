@@ -24,20 +24,42 @@ import (
 	"github.com/upbound/up/internal/xpkg/dep/resolver/image"
 )
 
-// New returns a new v1beta1.Dependency based on the given package name
-// Expects names of the form source@version where @version can be
-// left blank in order to indicate 'latest'.
+// New returns a new v1beta1.Dependency based on the given package name.
+// Expects names of the form source@version or source:version where
+// the version part can be left blank to indicate 'latest'.
 func New(pkg string) v1beta1.Dependency {
-
-	// if the passed in ver was blank use the default to pass
-	// constraint checks and grab latest semver
+	// If the passed-in version was blank, use the default to pass
+	// constraint checks and grab the latest semver
 	version := image.DefaultVer
 
-	ps := strings.Split(pkg, "@")
+	// Split the package into parts by '/'
+	parts := strings.Split(pkg, "/")
 
-	source := ps[0]
-	if len(ps) == 2 {
-		version = ps[1]
+	// Assume the last part could be the version tag
+	lastPart := parts[len(parts)-1]
+
+	// Initialize source with the input package name
+	source := pkg
+
+	// Check if the last part contains '@' or ':'
+	if strings.ContainsAny(lastPart, "@:") {
+		// Find the first occurrence of either '@' or ':'
+		var delimiter string
+		if at := strings.Index(lastPart, "@"); at != -1 {
+			delimiter = "@"
+		}
+		if colon := strings.LastIndex(lastPart, ":"); colon != -1 {
+			// Use the latest delimiter found
+			if delimiter == "" || colon > strings.Index(lastPart, delimiter) {
+				delimiter = ":"
+			}
+		}
+
+		if prefix, suffix, found := strings.Cut(lastPart, delimiter); found {
+			parts[len(parts)-1] = prefix
+			source = strings.Join(parts, "/")
+			version = suffix
+		}
 	}
 
 	return v1beta1.Dependency{

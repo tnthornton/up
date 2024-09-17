@@ -132,6 +132,69 @@ func TestResolveTag(t *testing.T) {
 				err: errors.Wrap(errors.New(errFailedToFetchTags), errFailedToFetchTags),
 			},
 		},
+		"NoMatchingVersionShowLatestVersions": {
+			reason: "Should return an error with the latest available versions when no matching version is found.",
+			args: args{
+				dep: v1beta1.Dependency{
+					Package:     "crossplane/provider-aws",
+					Constraints: ">=v3.0.0",
+				},
+				fetcher: NewMockFetcher(
+					WithTags(
+						[]string{
+							"v0.1.0",
+							"v1.0.0",
+							"v2.0.0",
+						},
+					),
+				),
+			},
+			want: want{
+				err: errors.New("supplied version does not match an existing version. Latest available versions: [v0.1.0 v1.0.0 v2.0.0]"),
+			},
+		},
+		"NoMatchingVersionShowLatestVersionsMultiple": {
+			reason: "Should return an error with the latest available versions when no matching version is found.",
+			args: args{
+				dep: v1beta1.Dependency{
+					Package:     "crossplane/provider-aws",
+					Constraints: ">=v4.0.0",
+				},
+				fetcher: NewMockFetcher(
+					WithTags(
+						[]string{
+							"v0.1.0",
+							"v1.0.0",
+							"v2.0.0",
+							"v3.0.0",
+						},
+					),
+				),
+			},
+			want: want{
+				err: errors.New("supplied version does not match an existing version. Latest available versions: [v1.0.0 v2.0.0 v3.0.0]"),
+			},
+		},
+		"NoMatchingVersionShowFewerThanThreeVersions": {
+			reason: "Should return an error with the available versions when fewer than three versions are available.",
+			args: args{
+				dep: v1beta1.Dependency{
+					Package:     "crossplane/provider-aws",
+					Constraints: ">=v3.0.0",
+				},
+				fetcher: NewMockFetcher(
+					WithTags(
+						[]string{
+							"v1.0.0",
+							"v2.0.0",
+						},
+					),
+				),
+			},
+			want: want{
+				err: errors.New("supplied version does not match an existing version. Latest available versions: [v1.0.0 v2.0.0]"),
+			},
+		},
 	}
 
 	for name, tc := range cases {
@@ -142,11 +205,11 @@ func TestResolveTag(t *testing.T) {
 			got, err := r.ResolveTag(context.Background(), tc.args.dep)
 
 			if diff := cmp.Diff(tc.want.err, err, test.EquateErrors()); diff != "" {
-				t.Errorf("\n%s\nUpsertDeps(...): -want err, +got err:\n%s", tc.reason, diff)
+				t.Errorf("\n%s\nResolveTag(...): -want err, +got err:\n%s", tc.reason, diff)
 			}
 
 			if diff := cmp.Diff(tc.want.tag, got); diff != "" {
-				t.Errorf("\n%s\nUpsertDeps(...): -want err, +got err:\n%s", tc.reason, diff)
+				t.Errorf("\n%s\nResolveTag(...): -want tag, +got tag:\n%s", tc.reason, diff)
 			}
 		})
 	}

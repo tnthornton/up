@@ -106,11 +106,16 @@ func (c *addCmd) Run(ctx context.Context, p pterm.TextPrinter, pb *pterm.BulletL
 	if err != nil {
 		return errors.Wrapf(err, "in %s", c.Package)
 	}
+	p.Printfln("%s:%s added to xpkg cache", ud.Package, ud.Constraints)
 
 	meta := c.ws.View().Meta()
 
 	if meta != nil {
 		// Metadata file exists in the workspace, upsert the new dependency
+		// use the user-specified constraints if provided; otherwise, use latest
+		if d.Constraints != "" {
+			ud.Constraints = d.Constraints
+		}
 		if err := meta.Upsert(ud); err != nil {
 			return err
 		}
@@ -119,7 +124,6 @@ func (c *addCmd) Run(ctx context.Context, p pterm.TextPrinter, pb *pterm.BulletL
 			return err
 		}
 	}
-
-	p.Printfln("%s added to xpkg cache", c.Package)
+	p.Printfln("%s:%s added to project dependency", ud.Package, ud.Constraints)
 	return nil
 }

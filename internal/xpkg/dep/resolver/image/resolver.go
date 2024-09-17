@@ -140,17 +140,15 @@ func (r *Resolver) ResolveTag(ctx context.Context, dep v1beta1.Dependency) (stri
 	for _, r := range tags {
 		v, err := semver.NewVersion(r)
 		if err != nil {
-			// We skip any tags that are not valid semantic versions.
-			//
-			// TODO @(tnthornton) we should verify this is the behavior we
-			// want long term - i.e. should we care if an end user chooses
-			// not to tag their packages with semver?
+			// Skip any tags that are not valid semantic versions.
 			continue
 		}
 		vs = append(vs, v)
 	}
 
+	// Sort the versions in ascending order
 	sort.Sort(semver.Collection(vs))
+
 	var ver string
 	for _, v := range vs {
 		if c.Check(v) {
@@ -158,8 +156,21 @@ func (r *Resolver) ResolveTag(ctx context.Context, dep v1beta1.Dependency) (stri
 		}
 	}
 
+	// If no matching version was found, show the latest 3 possible versions
 	if ver == "" {
-		return "", errors.New(errNoMatchingVersion)
+		// Determine the latest 3 available versions (or fewer if there aren't 3)
+		numVersionsToShow := 3
+		if len(vs) < 3 {
+			numVersionsToShow = len(vs)
+		}
+
+		latestVersions := vs[len(vs)-numVersionsToShow:] // Get the last `numVersionsToShow` elements
+		availableVersions := []string{}
+		for _, v := range latestVersions {
+			availableVersions = append(availableVersions, v.Original())
+		}
+
+		return "", errors.Errorf("%s. Latest available versions: %v", errNoMatchingVersion, availableVersions)
 	}
 
 	return ver, nil

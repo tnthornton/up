@@ -64,6 +64,8 @@ type addTestCase struct {
 	imageTag     name.Tag
 	packageType  pkgv1beta1.PackageType
 	expectedDeps []pkgmetav1.Dependency
+	expectError  bool // Add this field to indicate whether an error is expected
+
 }
 
 func TestAdd(t *testing.T) {
@@ -96,7 +98,7 @@ func TestAdd(t *testing.T) {
 			packageType: pkgv1beta1.FunctionPackageType,
 			expectedDeps: []pkgmetav1.Dependency{{
 				Function: ptr.To(functionTag.RepositoryStr()),
-				Version:  functionTag.TagStr(),
+				Version:  ">=v0.0.0",
 			}},
 		},
 		"AddProviderWithoutVersion": {
@@ -107,7 +109,7 @@ func TestAdd(t *testing.T) {
 			packageType: pkgv1beta1.ProviderPackageType,
 			expectedDeps: []pkgmetav1.Dependency{{
 				Provider: ptr.To(providerTag.RepositoryStr()),
-				Version:  providerTag.TagStr(),
+				Version:  ">=v0.0.0",
 			}},
 		},
 		"AddConfigurationWithoutVersion": {
@@ -118,10 +120,9 @@ func TestAdd(t *testing.T) {
 			packageType: pkgv1beta1.ConfigurationPackageType,
 			expectedDeps: []pkgmetav1.Dependency{{
 				Configuration: ptr.To(configurationTag.RepositoryStr()),
-				Version:       configurationTag.TagStr(),
+				Version:       ">=v0.0.0",
 			}},
 		},
-
 		"AddFunctionWithVersion": {
 			inputDeps:   nil,
 			newPackage:  functionTag.RepositoryStr() + "@" + functionTag.TagStr(),
@@ -133,6 +134,48 @@ func TestAdd(t *testing.T) {
 				Version:  functionTag.TagStr(),
 			}},
 		},
+		"AddFunctionWithSemVersion": {
+			inputDeps:   nil,
+			newPackage:  functionTag.RepositoryStr() + "@" + ">=v0.1.0",
+			image:       functionXpkg,
+			imageTag:    functionTag,
+			packageType: pkgv1beta1.FunctionPackageType,
+			expectedDeps: []pkgmetav1.Dependency{{
+				Function: ptr.To(functionTag.RepositoryStr()),
+				Version:  ">=v0.1.0",
+			}},
+		},
+		"AddFunctionWithSemVersionGreaterThan": {
+			inputDeps:   nil,
+			newPackage:  functionTag.RepositoryStr() + "@" + ">v0.1.0",
+			image:       functionXpkg,
+			imageTag:    functionTag,
+			packageType: pkgv1beta1.FunctionPackageType,
+			expectedDeps: []pkgmetav1.Dependency{{
+				Function: ptr.To(functionTag.RepositoryStr()),
+				Version:  ">v0.1.0",
+			}},
+		},
+		"AddFunctionWithSemVersionLessThan": {
+			inputDeps:   nil,
+			newPackage:  functionTag.RepositoryStr() + "@" + "<v0.3.0",
+			image:       functionXpkg,
+			imageTag:    functionTag,
+			packageType: pkgv1beta1.FunctionPackageType,
+			expectedDeps: []pkgmetav1.Dependency{{
+				Function: ptr.To(functionTag.RepositoryStr()),
+				Version:  "<v0.3.0",
+			}},
+		},
+		"AddFunctionWithSemVersionLessThanError": {
+			inputDeps:    nil,
+			newPackage:   functionTag.RepositoryStr() + "@" + "<v0.2.0",
+			image:        functionXpkg,
+			imageTag:     functionTag,
+			packageType:  pkgv1beta1.FunctionPackageType,
+			expectedDeps: nil,  // No dependencies should be added because of the version mismatch.
+			expectError:  true, // Add this field to indicate this test expects an error.
+		},
 		"AddProviderWithVersion": {
 			inputDeps:   nil,
 			newPackage:  providerTag.RepositoryStr() + "@" + providerTag.TagStr(),
@@ -142,6 +185,17 @@ func TestAdd(t *testing.T) {
 			expectedDeps: []pkgmetav1.Dependency{{
 				Provider: ptr.To(providerTag.RepositoryStr()),
 				Version:  providerTag.TagStr(),
+			}},
+		},
+		"AddProviderWithSemVersion": {
+			inputDeps:   nil,
+			newPackage:  providerTag.RepositoryStr() + "@" + "<=v0.3.0",
+			image:       providerXpkg,
+			imageTag:    providerTag,
+			packageType: pkgv1beta1.ProviderPackageType,
+			expectedDeps: []pkgmetav1.Dependency{{
+				Provider: ptr.To(providerTag.RepositoryStr()),
+				Version:  "<=v0.3.0",
 			}},
 		},
 		"AddConfigurationWithVersion": {
@@ -155,7 +209,26 @@ func TestAdd(t *testing.T) {
 				Version:       configurationTag.TagStr(),
 			}},
 		},
-
+		"AddConfigurationWithSemVersion": {
+			inputDeps:   nil,
+			newPackage:  configurationTag.RepositoryStr() + "@" + "<=v0.1.0",
+			image:       configurationXpkg,
+			imageTag:    configurationTag,
+			packageType: pkgv1beta1.ConfigurationPackageType,
+			expectedDeps: []pkgmetav1.Dependency{{
+				Configuration: ptr.To(configurationTag.RepositoryStr()),
+				Version:       "<=v0.1.0",
+			}},
+		},
+		"AddConfigurationWithSemVersionNotAvailable": {
+			inputDeps:    nil,
+			newPackage:   configurationTag.RepositoryStr() + "@" + ">=v1.0.0",
+			image:        configurationXpkg,
+			imageTag:     configurationTag,
+			packageType:  pkgv1beta1.ConfigurationPackageType,
+			expectedDeps: nil,  // No dependencies should be added because of the version mismatch.
+			expectError:  true, // Add this field to indicate this test expects an error.
+		},
 		"AddProviderWithExistingDeps": {
 			inputDeps: []pkgmetav1.Dependency{{
 				Function: ptr.To(functionTag.RepositoryStr()),
@@ -182,6 +255,73 @@ func TestAdd(t *testing.T) {
 				Version:  "v0.1.0",
 			}},
 			newPackage:  functionTag.RepositoryStr() + "@" + functionTag.TagStr(),
+			image:       functionXpkg,
+			imageTag:    functionTag,
+			packageType: pkgv1beta1.FunctionPackageType,
+			expectedDeps: []pkgmetav1.Dependency{{
+				Function: ptr.To(functionTag.RepositoryStr()),
+				Version:  functionTag.TagStr(),
+			}},
+		},
+		"AddFunctionWithVersionColon": {
+			inputDeps:   nil,
+			newPackage:  functionTag.RepositoryStr() + ":" + functionTag.TagStr(),
+			image:       functionXpkg,
+			imageTag:    functionTag,
+			packageType: pkgv1beta1.FunctionPackageType,
+			expectedDeps: []pkgmetav1.Dependency{{
+				Function: ptr.To(functionTag.RepositoryStr()),
+				Version:  functionTag.TagStr(),
+			}},
+		},
+		"AddProviderWithVersionColon": {
+			inputDeps:   nil,
+			newPackage:  providerTag.RepositoryStr() + ":" + providerTag.TagStr(),
+			image:       providerXpkg,
+			imageTag:    providerTag,
+			packageType: pkgv1beta1.ProviderPackageType,
+			expectedDeps: []pkgmetav1.Dependency{{
+				Provider: ptr.To(providerTag.RepositoryStr()),
+				Version:  providerTag.TagStr(),
+			}},
+		},
+		"AddConfigurationWithVersionColon": {
+			inputDeps:   nil,
+			newPackage:  configurationTag.RepositoryStr() + ":" + configurationTag.TagStr(),
+			image:       configurationXpkg,
+			imageTag:    configurationTag,
+			packageType: pkgv1beta1.ConfigurationPackageType,
+			expectedDeps: []pkgmetav1.Dependency{{
+				Configuration: ptr.To(configurationTag.RepositoryStr()),
+				Version:       configurationTag.TagStr(),
+			}},
+		},
+		"AddProviderWithExistingDepsColon": {
+			inputDeps: []pkgmetav1.Dependency{{
+				Function: ptr.To(functionTag.RepositoryStr()),
+				Version:  functionTag.TagStr(),
+			}},
+			newPackage:  providerTag.RepositoryStr() + ":" + providerTag.TagStr(),
+			image:       providerXpkg,
+			imageTag:    providerTag,
+			packageType: pkgv1beta1.ProviderPackageType,
+			expectedDeps: []pkgmetav1.Dependency{
+				{
+					Function: ptr.To(functionTag.RepositoryStr()),
+					Version:  functionTag.TagStr(),
+				},
+				{
+					Provider: ptr.To(providerTag.RepositoryStr()),
+					Version:  providerTag.TagStr(),
+				},
+			},
+		},
+		"UpdateFunctionColon": {
+			inputDeps: []pkgmetav1.Dependency{{
+				Function: ptr.To(functionTag.RepositoryStr()),
+				Version:  "v0.1.0",
+			}},
+			newPackage:  functionTag.RepositoryStr() + ":" + functionTag.TagStr(),
 			image:       functionXpkg,
 			imageTag:    functionTag,
 			packageType: pkgv1beta1.FunctionPackageType,
@@ -333,7 +473,7 @@ func (tc *addTestCase) Run(t *testing.T, makePkg func(deps []pkgmetav1.Dependenc
 		),
 	)
 
-	// Create a dependnecy manager that uses our cache and resolver.
+	// Create a dependency manager that uses our cache and resolver.
 	mgr, err := manager.New(
 		manager.WithCache(cch),
 		manager.WithResolver(r),
@@ -356,7 +496,14 @@ func (tc *addTestCase) Run(t *testing.T, makePkg func(deps []pkgmetav1.Dependenc
 		Package: tc.newPackage,
 	}
 	err = cmd.Run(context.Background(), &pterm.DefaultBasicText, &pterm.DefaultBulletList)
-	assert.NilError(t, err)
+
+	// Check if we expect an error.
+	if tc.expectError {
+		assert.ErrorContains(t, err, "supplied version does not match an existing version")
+		return // No need to proceed with further checks if this is an error case.
+	} else {
+		assert.NilError(t, err)
+	}
 
 	// Verify that the dep was correctly added to the metadata.
 	updatedBytes, err := afero.ReadFile(fs, "/project/meta.yaml")
