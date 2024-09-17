@@ -25,6 +25,7 @@ import (
 	"github.com/crossplane/crossplane-runtime/pkg/parser"
 	xpv1 "github.com/crossplane/crossplane/apis/apiextensions/v1"
 	metav1 "github.com/crossplane/crossplane/apis/pkg/meta/v1"
+	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
 	"github.com/pterm/pterm"
 	"github.com/spf13/afero"
@@ -155,7 +156,7 @@ func (c *Cmd) Run(ctx context.Context, p pterm.TextPrinter) error { //nolint:goc
 		return errors.Wrap(err, "failed to build package")
 	}
 
-	pkgName := fmt.Sprintf("%s-%s", project.Name, c.Tag)
+	pkgName := fmt.Sprintf("%s-%s.xpkg", project.Name, c.Tag)
 	outFile := xpkg.BuildPath(c.OutputDir, pkgName)
 
 	err = c.outputFS.MkdirAll(c.OutputDir, 0755)
@@ -169,7 +170,12 @@ func (c *Cmd) Run(ctx context.Context, p pterm.TextPrinter) error { //nolint:goc
 	}
 	defer f.Close() //nolint:errcheck // Can't do anything useful with this error.
 
-	err = tarball.Write(nil, img, f)
+	imgTag, err := name.NewTag(fmt.Sprintf("%s:%s", project.Spec.Repository, c.Tag))
+	if err != nil {
+		return errors.Wrap(err, "failed to construct image tag")
+	}
+
+	err = tarball.Write(imgTag, img, f)
 	if err != nil {
 		return errors.Wrap(err, "failed to write package to file")
 	}

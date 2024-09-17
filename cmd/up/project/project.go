@@ -14,9 +14,13 @@
 
 package project
 
-import "github.com/upbound/up/cmd/up/project/build"
+import (
+	"github.com/upbound/up/cmd/up/project/build"
+	"github.com/upbound/up/cmd/up/project/push"
+)
 
 type Cmd struct {
 	Init  initCmd   `cmd:"" help:"Initialize a new project."`
 	Build build.Cmd `cmd:"" help:"Build a project into a Crossplane package."`
+	Push  push.Cmd  `cmd:"" help:"Push a project's packages to the Upbound Marketplace."`
 }

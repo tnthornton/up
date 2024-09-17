@@ -17,11 +17,13 @@ package build
 import (
 	"context"
 	"embed"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
 
 	metav1 "github.com/crossplane/crossplane/apis/pkg/meta/v1"
+	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
 	"github.com/pterm/pterm"
 	"github.com/spf13/afero"
@@ -73,9 +75,11 @@ func TestBuild(t *testing.T) {
 	// 3. Lint it to make sure it's a valid Crossplane Configuration package.
 	// 4. Check that the package metadata is correctly constructed.
 	// 5. Check that the package has the right number of objects in it.
+	imgTag, err := name.NewTag(fmt.Sprintf("%s:%s", project.Spec.Repository, c.Tag))
+	assert.NilError(t, err)
 	img, err := tarball.Image(func() (io.ReadCloser, error) {
 		return outFS.Open("_output/configuration-getting-started-unittest.xpkg")
-	}, nil)
+	}, &imgTag)
 	assert.NilError(t, err)
 
 	m, err := xpkgmarshaler.NewMarshaler()

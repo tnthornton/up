@@ -147,7 +147,7 @@ func PushImages(p pterm.TextPrinter, upCtx *upbound.Context, imgs []v1.Image, t 
 		i, img := i, img
 		g.Go(func() error {
 			// annotate image layers
-			aimg, err := annotate(img)
+			aimg, err := xpkg.AnnotateImage(img)
 			if err != nil {
 				return err
 			}
@@ -206,55 +206,4 @@ func PushImages(p pterm.TextPrinter, upCtx *upbound.Context, imgs []v1.Image, t 
 
 	p.Printfln("xpkg pushed to %s", tag.String())
 	return nil
-}
-
-// annotate reads in the layers of the given v1.Image and annotates the xpkg
-// layers with their corresponding annotations, returning a new v1.Image
-// containing the annotation details.
-func annotate(i v1.Image) (v1.Image, error) { //nolint:gocyclo
-	cfgFile, err := i.ConfigFile()
-	if err != nil {
-		return nil, err
-	}
-
-	layers, err := i.Layers()
-	if err != nil {
-		return nil, err
-	}
-
-	addendums := make([]mutate.Addendum, 0)
-
-	for _, l := range layers {
-		d, err := l.Digest()
-		if err != nil {
-			return nil, err
-		}
-		if annotation, ok := cfgFile.Config.Labels[xpkg.Label(d.String())]; ok {
-			addendums = append(addendums, mutate.Addendum{
-				Layer: l,
-				Annotations: map[string]string{
-					xpkg.AnnotationKey: annotation,
-				},
-			})
-			continue
-		}
-		addendums = append(addendums, mutate.Addendum{
-			Layer: l,
-		})
-	}
-
-	// we didn't find any annotations, return original image
-	if len(addendums) == 0 {
-		return i, nil
-	}
-
-	img := empty.Image
-	for _, a := range addendums {
-		img, err = mutate.Append(img, a)
-		if err != nil {
-			return nil, errors.Wrap(err, errBuildImage)
-		}
-	}
-
-	return mutate.ConfigFile(img, cfgFile)
 }
