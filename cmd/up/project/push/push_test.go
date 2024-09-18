@@ -17,74 +17,130 @@ package push
 import (
 	"context"
 	"embed"
-	"fmt"
-	"io"
+	"net/http"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"testing"
 
+	xpmetav1 "github.com/crossplane/crossplane/apis/pkg/meta/v1"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/registry"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
-	"github.com/google/go-containerregistry/pkg/v1/tarball"
 	"github.com/pterm/pterm"
 	"github.com/spf13/afero"
 	"gotest.tools/v3/assert"
+	"gotest.tools/v3/assert/cmp"
 
 	"github.com/upbound/up/internal/upbound"
+	"github.com/upbound/up/internal/xpkg"
+	xpkgmarshaler "github.com/upbound/up/internal/xpkg/dep/marshaler/xpkg"
 )
 
 //go:embed testdata/demo-project/**
 var demoProject embed.FS
 
+//go:embed testdata/embedded-functions/**
+var embeddedFunctions embed.FS
+
 func TestPush(t *testing.T) {
-	const (
-		pkgFileName = "demo-project-v0.0.3.uppkg"
-		pkgTag      = "v0.0.3"
-	)
-
 	// Start a test registry so we can actually do a push.
-	reg, err := registry.TLS("localhost")
+	regSrv, err := registry.TLS("localhost")
 	assert.NilError(t, err)
-	t.Cleanup(reg.Close)
-
-	projFS := afero.NewBasePathFs(afero.FromIOFS{FS: demoProject}, "testdata/demo-project")
-	pkgFS := afero.NewMemMapFs()
-
-	// Replace the tag in the image to include the correct address of the test
-	// registry so that the push command can find it in the tarball.
-	repo := strings.TrimPrefix(reg.URL, "https://") + "/demo/project"
-	imgTag, err := name.NewTag(fmt.Sprintf("%s:%s", repo, pkgTag))
-	assert.NilError(t, err)
-	img, err := tarball.Image(func() (io.ReadCloser, error) {
-		return projFS.Open(filepath.Join("_output", pkgFileName))
-	}, nil)
-	assert.NilError(t, err)
-	imgWriter, err := pkgFS.Create(pkgFileName)
-	assert.NilError(t, err)
-	err = tarball.Write(imgTag, img, imgWriter)
-	assert.NilError(t, err)
-	err = imgWriter.Close()
+	t.Cleanup(regSrv.Close)
+	testRegistry, err := name.NewRegistry(strings.TrimPrefix(regSrv.URL, "https://"))
 	assert.NilError(t, err)
 
-	c := &Cmd{
-		ProjectFile: "upbound.yaml",
-		Repository:  repo,
-		Tag:         "v0.0.3",
-		projFS:      projFS,
-		packageFS:   pkgFS,
-		transport:   reg.Client().Transport,
+	tcs := map[string]struct {
+		projFS                afero.Fs
+		repo                  string
+		expectedFunctionCount int
+	}{
+		"ConfigurationOnly": {
+			projFS:                afero.NewBasePathFs(afero.FromIOFS{FS: demoProject}, "testdata/demo-project"),
+			repo:                  "xpkg.upbound.io/unittest/demo-project",
+			expectedFunctionCount: 0,
+		},
+		"EmbeddedFunctions": {
+			projFS:                afero.NewBasePathFs(afero.FromIOFS{FS: embeddedFunctions}, "testdata/embedded-functions"),
+			repo:                  "xpkg.upbound.io/unittest/embedded-functions",
+			expectedFunctionCount: 1,
+		},
 	}
 
-	upCtx := &upbound.Context{
-		Domain: &url.URL{},
-	}
-	err = c.Run(context.Background(), upCtx, &pterm.DefaultBasicText)
-	assert.NilError(t, err)
+	for testName, tc := range tcs {
+		// Pin loop vars.
+		testName, tc := testName, tc
+		t.Run(testName, func(t *testing.T) {
+			t.Parallel()
 
-	// Check that the server actually accepted the image. This isn't a super
-	// check, but good enough for now.
-	_, err = remote.Head(imgTag, remote.WithTransport(reg.Client().Transport))
-	assert.NilError(t, err)
+			repo, err := name.NewRepository(tc.repo)
+			assert.NilError(t, err)
+
+			transport := &hostReplacementRoundTripper{
+				wrap: regSrv.Client().Transport,
+				from: "xpkg.upbound.io",
+				to:   testRegistry.RegistryStr(),
+			}
+			c := &Cmd{
+				ProjectFile: "upbound.yaml",
+				Repository:  tc.repo,
+				Tag:         "v0.0.3",
+				projFS:      tc.projFS,
+				packageFS:   afero.NewBasePathFs(tc.projFS, "_output"),
+				transport:   transport,
+			}
+
+			ep, err := url.Parse("https://donotuse.example.com")
+			assert.NilError(t, err)
+			upCtx := &upbound.Context{
+				Domain:           &url.URL{},
+				RegistryEndpoint: ep,
+			}
+			err = c.Run(context.Background(), upCtx, &pterm.DefaultBasicText)
+			assert.NilError(t, err)
+
+			// Pull the configuration image from the server and unpack its
+			// metadata.
+			gotImg, err := remote.Image(repo.Tag("v0.0.3"), remote.WithTransport(transport))
+			assert.NilError(t, err)
+
+			m, err := xpkgmarshaler.NewMarshaler()
+			assert.NilError(t, err)
+			cfgPkg, err := m.FromImage(xpkg.Image{
+				Image: gotImg,
+			})
+			assert.NilError(t, err)
+			cfgMeta, ok := cfgPkg.Meta().(*xpmetav1.Configuration)
+			assert.Assert(t, ok, "unexpected metadata type for configuration")
+
+			// Make sure we can pull the embedded functions the configuration
+			// depends on.
+			assert.Assert(t, cmp.Len(cfgMeta.Spec.DependsOn, tc.expectedFunctionCount))
+			for _, dep := range cfgMeta.Spec.DependsOn {
+				depRepo, err := name.NewRepository(*dep.Function)
+				assert.NilError(t, err)
+				depRef := depRepo.Digest(dep.Version)
+
+				gotDep, err := remote.Image(depRef, remote.WithTransport(transport))
+				assert.NilError(t, err)
+				cfgPkg, err := m.FromImage(xpkg.Image{
+					Image: gotDep,
+				})
+				assert.NilError(t, err)
+				_, ok := cfgPkg.Meta().(*xpmetav1.Function)
+				assert.Assert(t, ok, "unexpected metadata type for function")
+			}
+		})
+	}
+}
+
+type hostReplacementRoundTripper struct {
+	wrap http.RoundTripper
+	from string
+	to   string
+}
+
+func (h *hostReplacementRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
+	r.URL.Host = strings.Replace(r.URL.Host, h.from, h.to, 1)
+	return h.wrap.RoundTrip(r)
 }
