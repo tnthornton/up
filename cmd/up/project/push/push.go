@@ -106,8 +106,8 @@ func (c *Cmd) Run(ctx context.Context, upCtx *upbound.Context, p pterm.TextPrint
 	}
 
 	if c.PackageFile == "" {
-		pkgName := fmt.Sprintf("%s-%s.xpkg", project.Name, c.Tag)
-		c.PackageFile = xpkg.BuildPath("", pkgName)
+		pkgName := fmt.Sprintf("%s-%s.uppkg", project.Name, c.Tag)
+		c.PackageFile = xpkg.ReplaceExt(xpkg.BuildPath("", pkgName), ".uppkg")
 	}
 
 	img, err := tarball.Image(func() (io.ReadCloser, error) {

@@ -85,3 +85,36 @@ func AnnotateImage(i v1.Image) (v1.Image, error) { //nolint:gocyclo
 
 	return mutate.ConfigFile(img, cfgFile)
 }
+
+func BuildIndex(imgs ...v1.Image) (v1.ImageIndex, error) {
+	adds := make([]mutate.IndexAddendum, 0, len(imgs))
+	for _, img := range imgs {
+		aimg, err := AnnotateImage(img)
+		if err != nil {
+			return nil, err
+		}
+		mt, err := aimg.MediaType()
+		if err != nil {
+			return nil, err
+		}
+
+		conf, err := aimg.ConfigFile()
+		if err != nil {
+			return nil, err
+		}
+
+		adds = append(adds, mutate.IndexAddendum{
+			Add: aimg,
+			Descriptor: v1.Descriptor{
+				MediaType: mt,
+				Platform: &v1.Platform{
+					Architecture: conf.Architecture,
+					OS:           conf.OS,
+					OSVersion:    conf.OSVersion,
+				},
+			},
+		})
+	}
+
+	return mutate.AppendManifests(empty.Index, adds...), nil
+}

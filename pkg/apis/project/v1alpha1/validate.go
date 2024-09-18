@@ -22,6 +22,8 @@ import (
 func (p *Project) Validate() error {
 	var errs []error
 
+	p.Default()
+
 	if p.GetName() == "" {
 		errs = append(errs, errors.New("name must not be empty"))
 	}
@@ -54,4 +56,17 @@ func (s *ProjectSpec) Validate() error {
 	}
 
 	return errors.Join(errs...)
+}
+
+func (p *Project) Default() {
+	p.Spec.Default()
+}
+
+func (s *ProjectSpec) Default() {
+	if s == nil {
+		return
+	}
+	if len(s.Architectures) == 0 {
+		s.Architectures = []string{"amd64", "arm64"}
+	}
 }

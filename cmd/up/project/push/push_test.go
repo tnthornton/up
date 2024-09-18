@@ -40,7 +40,7 @@ var demoProject embed.FS
 
 func TestPush(t *testing.T) {
 	const (
-		pkgFileName = "demo-project-v0.0.3.xpkg"
+		pkgFileName = "demo-project-v0.0.3.uppkg"
 		pkgTag      = "v0.0.3"
 	)
 
