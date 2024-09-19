@@ -1,0 +1,24 @@
+apiVersion: meta.dev.upbound.io/v1alpha1
+kind: Project
+metadata:
+  creationTimestamp: null
+  name: test99
+spec:
+  description: This is where you can describe your project.
+  license: Apache-2.0
+  maintainer: Upbound User <user@example.com>
+  readme: |
+    This is where you can add a readme for your project.
+  repository: xpkg.upbound.io/example/project-template
+  source: github.com/upbound/project-template
+  dependsOn:
+    - provider: xpkg.upbound.io/crossplane-contrib/provider-nop
+      version: ">=v0.2.1"
+    - function: xpkg.upbound.io/crossplane-contrib/function-kcl
+      version: "v0.8.0"
+    - function: xpkg.upbound.io/crossplane-contrib/function-go-templating
+      version: "v0.6.0"
+    - function: xpkg.upbound.io/crossplane-contrib/function-patch-and-transform
+      version: "v0.7.0"
+    - function: xpkg.upbound.io/crossplane-contrib/function-cel-filter
+      version: "v0.1.1"

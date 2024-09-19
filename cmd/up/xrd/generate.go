@@ -49,8 +49,8 @@ type inputYAML struct {
 
 type generateCmd struct {
 	File   string `arg:"" help:"Path to the file containing the Composite Resource (XR) or Composite Resource Claim (XRC)."`
-	Path   string `help:"Path to the output file where the CompositeResourceDefinition will be saved." optional:""`
-	Plural string `help:"Optional custom plural form for the CompositeResourceDefinition." optional:""`
+	Path   string `help:"Path to the output file where the Composite Resource Definition (XRD) will be saved." optional:""`
+	Plural string `help:"Optional custom plural form for the Composite Resource Definition (XRD)." optional:""`
 	Output string `help:"Output format for the results: 'file' to save to a file, 'yaml' to print XRD in YAML format, 'json' to print XRD in JSON format." short:"o" default:"file" enum:"file,yaml,json"`
 }
 
@@ -230,8 +230,8 @@ func newXRD(yamlData []byte, customPlural string) (*v1.CompositeResourceDefiniti
 	// Construct the XRD
 	xrd := &v1.CompositeResourceDefinition{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: "apiextensions.crossplane.io/v1",
-			Kind:       "CompositeResourceDefinition",
+			APIVersion: v1.CompositeResourceDefinitionGroupVersionKind.GroupVersion().String(),
+			Kind:       v1.CompositeResourceDefinitionGroupVersionKind.Kind,
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name: strings.ToLower(fmt.Sprintf("%s.%s", plural, group)),
