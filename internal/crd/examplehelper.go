@@ -46,6 +46,14 @@ func GenerateExample(crd apiextensionsv1.CustomResourceDefinition, minimal, skip
 			if err != nil {
 				return nil, fmt.Errorf("failed to parse properties: %w", err)
 			}
+
+			if _, exists := yamlData["apiVersion"]; !exists {
+				yamlData["apiVersion"] = fmt.Sprintf("%s/%s", parser.group, version)
+			}
+			if _, exists := yamlData["kind"]; !exists {
+				yamlData["kind"] = parser.kind
+			}
+
 			return yamlData, nil
 		}
 	}

@@ -27,6 +27,7 @@ import (
 	"github.com/upbound/up/cmd/up/controlplane"
 	"github.com/upbound/up/cmd/up/ctx"
 	"github.com/upbound/up/cmd/up/dependency"
+	"github.com/upbound/up/cmd/up/example"
 	"github.com/upbound/up/cmd/up/group"
 	"github.com/upbound/up/cmd/up/local"
 	"github.com/upbound/up/cmd/up/login"
@@ -112,8 +113,9 @@ type cli struct {
 
 	// Develop with Crossplane
 	Project     project.Cmd     `cmd:"" group:"Develop with Crossplane" help:"Manage Upbound development projects."`
+	Example     example.Cmd     `cmd:"" group:"Develop with Crossplane" help:"Manage Claim(XRC) or Composite Resource(XR)."`
 	Dependency  dependency.Cmd  `cmd:"" group:"Develop with Crossplane" aliases:"dep" help:"Manage configuration dependencies."`
-	XRD         xrd.Cmd         `cmd:"" group:"Develop with Crossplane" help:"Manage XRDs from Composite Resources or Claims."`
+	XRD         xrd.Cmd         `cmd:"" group:"Develop with Crossplane" help:"Manage XRDs from Composite Resources(XR) or Claims(XRC)."`
 	Composition composition.Cmd `cmd:"" group:"Develop with Crossplane" help:"Manage Compositions."`
 	Local       local.Cmd       `cmd:"" group:"Develop with Crossplane" help:"Interact with a local development control plane."`
 	XPKG        xpkg.Cmd        `cmd:"" group:"Develop with Crossplane" help:"Package configurations, functions, and providers for distribution."`
