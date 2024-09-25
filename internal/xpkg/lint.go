@@ -21,7 +21,6 @@ import (
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
 	v1 "github.com/crossplane/crossplane/apis/apiextensions/v1"
 	pkgmetav1 "github.com/crossplane/crossplane/apis/pkg/meta/v1"
-	pkgmetav1beta1 "github.com/crossplane/crossplane/apis/pkg/meta/v1beta1"
 	admv1 "k8s.io/api/admissionregistration/v1"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	extv1beta1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
@@ -98,7 +97,8 @@ func IsConfiguration(o runtime.Object) error {
 
 // IsFunction checks that an object is a Function meta type.
 func IsFunction(o runtime.Object) error {
-	if _, ok := o.(*pkgmetav1beta1.Function); !ok {
+	po, _ := scheme.TryConvert(o, &pkgmetav1.Function{})
+	if _, ok := po.(*pkgmetav1.Function); !ok {
 		return errors.New(errNotMetaFunction)
 	}
 	return nil

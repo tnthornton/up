@@ -20,7 +20,9 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/alecthomas/kong"
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
@@ -34,6 +36,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/upbound/up-sdk-go/service/repositories"
+	"github.com/upbound/up/cmd/up/project/build"
 	"github.com/upbound/up/internal/credhelper"
 	"github.com/upbound/up/internal/upbound"
 	"github.com/upbound/up/internal/upterm"
@@ -44,9 +47,9 @@ import (
 type Cmd struct {
 	ProjectFile string        `short:"f" help:"Path to project definition file." default:"upbound.yaml"`
 	Repository  string        `optional:"" help:"Repository to push to. Overrides the repository specified in the project file."`
-	Tag         string        `short:"t" help:"Tag for the built package." default:"latest"`
+	Tag         string        `short:"t" help:"Tag for the built package. If not provided, a semver tag will be generated." default:""`
 	PackageFile string        `optional:"" help:"Package file to push. Discovered by default based on repository and tag."`
-	Create      bool          `help:"Create the repository before pushing if it does not exist."`
+	Create      bool          `help:"Create the configuration repository before pushing if it does not exist. Function sub-repositories will always be created automatically."`
 	Flags       upbound.Flags `embed:""`
 
 	projFS    afero.Fs
@@ -82,12 +85,18 @@ func (c *Cmd) AfterApply(kongCtx *kong.Context) error {
 		c.packageFS = afero.NewOsFs()
 	}
 
+	if c.Tag == "" {
+		// TODO(adamwg): Consider smarter tag generation using git metadata if
+		// the project lives in a git repository, or the package digest.
+		c.Tag = fmt.Sprintf("v0.0.0-%d", time.Now().Unix())
+	}
+
 	c.transport = http.DefaultTransport
 
 	return nil
 }
 
-func (c *Cmd) Run(ctx context.Context, upCtx *upbound.Context, p pterm.TextPrinter) error {
+func (c *Cmd) Run(ctx context.Context, upCtx *upbound.Context, p pterm.TextPrinter) error { //nolint:gocyclo // This isn't too complex.
 	project, err := c.parseProject()
 	if err != nil {
 		return err
@@ -99,30 +108,111 @@ func (c *Cmd) Run(ctx context.Context, upCtx *upbound.Context, p pterm.TextPrint
 	}
 
 	if c.Create {
-		err = c.createRepository(ctx, upCtx, imgTag)
+		if !isUpboundRepository(upCtx, imgTag.Repository) {
+			return errors.New("cannot create repository for non-Upbound registry")
+		}
+		err = c.createRepository(ctx, upCtx, imgTag.Repository)
 		if err != nil {
 			return err
 		}
 	}
 
 	if c.PackageFile == "" {
-		pkgName := fmt.Sprintf("%s-%s.xpkg", project.Name, c.Tag)
-		c.PackageFile = xpkg.BuildPath("", pkgName)
+		c.PackageFile = fmt.Sprintf("%s.uppkg", project.Name)
 	}
 
-	img, err := tarball.Image(func() (io.ReadCloser, error) {
-		return c.packageFS.Open(c.PackageFile)
-	}, &imgTag)
+	// Collect the images from the on-disk package and sort them into
+	// repositories.
+	var (
+		cfgImage v1.Image
+		fnImages map[name.Repository][]v1.Image
+	)
+	cfgTag, err := name.NewTag(fmt.Sprintf("%s:%s", project.Spec.Repository, build.ConfigurationTag))
 	if err != nil {
-		return errors.Wrap(err, "failed to read package")
+		return errors.Wrap(err, "failed to construct configuration tag")
 	}
-
-	img, err = xpkg.AnnotateImage(img)
+	err = upterm.WrapWithSuccessSpinner(fmt.Sprintf("Loading packages from %s", c.PackageFile), upterm.CheckmarkSuccessSpinner, func() error {
+		cfgImage, fnImages, err = collectImages(c.packageFS, c.PackageFile, cfgTag)
+		return err
+	})
 	if err != nil {
 		return err
 	}
 
-	return c.pushImage(ctx, upCtx, imgTag, img)
+	// Push all the function packages.
+	for repo, images := range fnImages {
+		// Create the subrepository if needed. We can only do this for the
+		// Upbound registry; assume other registries will create on push.
+		if isUpboundRepository(upCtx, repo) {
+			err := c.createRepository(ctx, upCtx, repo)
+			if err != nil {
+				return errors.Wrapf(err, "failed to create repository for function %q", repo)
+			}
+		}
+
+		err = upterm.WrapWithSuccessSpinner(fmt.Sprintf("Pushing %s", repo), upterm.CheckmarkSuccessSpinner, func() error {
+			return c.pushIndex(ctx, upCtx, repo, images...)
+		})
+		if err != nil {
+			return errors.Wrapf(err, "failed to push function %q", repo)
+		}
+	}
+
+	// Once the functions are pushed, push the configuration package.
+	err = upterm.WrapWithSuccessSpinner(fmt.Sprintf("Pushing %s", imgTag), upterm.CheckmarkSuccessSpinner, func() error {
+		return c.pushImage(ctx, upCtx, imgTag, cfgImage)
+	})
+	if err != nil {
+		return errors.Wrap(err, "failed to push configuration package")
+	}
+	return nil
+}
+
+func collectImages(pkgFS afero.Fs, fname string, cfgTag name.Tag) (v1.Image, map[name.Repository][]v1.Image, error) {
+	opener := func() (io.ReadCloser, error) {
+		return pkgFS.Open(fname)
+	}
+	mfst, err := tarball.LoadManifest(opener)
+	if err != nil {
+		return nil, nil, errors.Wrap(err, "failed to read package")
+	}
+
+	var (
+		fnImages = make(map[name.Repository][]v1.Image)
+		cfgImage v1.Image
+	)
+	for _, desc := range mfst {
+		if slices.Contains(desc.RepoTags, cfgTag.String()) {
+			cfgImage, err = tarball.Image(opener, &cfgTag)
+			if err != nil {
+				return nil, nil, errors.Wrap(err, "failed to load configuration image from package")
+			}
+			cfgImage, err = xpkg.AnnotateImage(cfgImage)
+			if err != nil {
+				return nil, nil, errors.Wrap(err, "failed to annotate configuration image")
+			}
+		} else {
+			fnTag, err := name.NewTag(desc.RepoTags[0])
+			if err != nil {
+				return nil, nil, errors.Wrapf(err, "failed to parse function image tag %q", desc.RepoTags[0])
+			}
+			fnImage, err := tarball.Image(opener, &fnTag)
+			if err != nil {
+				return nil, nil, errors.Wrapf(err, "failed to load function %q image from package", fnTag)
+			}
+			fnImage, err = xpkg.AnnotateImage(fnImage)
+			if err != nil {
+				return nil, nil, errors.Wrapf(err, "failed to annotate function %q image", fnTag)
+			}
+			fnImages[fnTag.Repository] = append(fnImages[fnTag.Repository], fnImage)
+		}
+	}
+
+	if cfgImage == nil {
+		return nil, nil, errors.New("failed to find configuration image in package")
+	}
+
+	return cfgImage, fnImages, nil
 }
 
 func (c *Cmd) parseProject() (*v1alpha1.Project, error) {
@@ -147,11 +237,8 @@ func (c *Cmd) parseProject() (*v1alpha1.Project, error) {
 	return &project, nil
 }
 
-func (c *Cmd) createRepository(ctx context.Context, upCtx *upbound.Context, tag name.Tag) error {
-	if !strings.Contains(tag.RegistryStr(), upCtx.RegistryEndpoint.Hostname()) {
-		return errors.New("cannot create repository for non-Upbound registry")
-	}
-	account, repo, ok := strings.Cut(tag.RepositoryStr(), "/")
+func (c *Cmd) createRepository(ctx context.Context, upCtx *upbound.Context, repo name.Repository) error {
+	account, repoName, ok := strings.Cut(repo.RepositoryStr(), "/")
 	if !ok {
 		return errors.New("invalid repository: must be of the form <account>/<name>")
 	}
@@ -160,14 +247,18 @@ func (c *Cmd) createRepository(ctx context.Context, upCtx *upbound.Context, tag 
 		return err
 	}
 	// TODO(adamwg): Make the repository private by default.
-	if err := repositories.NewClient(cfg).CreateOrUpdate(ctx, account, repo); err != nil {
+	if err := repositories.NewClient(cfg).CreateOrUpdate(ctx, account, repoName); err != nil {
 		return errors.Wrap(err, "failed to create repository")
 	}
 
 	return nil
 }
 
-func (c *Cmd) pushImage(ctx context.Context, upCtx *upbound.Context, tag name.Tag, img v1.Image) error {
+func isUpboundRepository(upCtx *upbound.Context, tag name.Repository) bool {
+	return strings.HasPrefix(tag.RegistryStr(), upCtx.RegistryEndpoint.Hostname())
+}
+
+func (c *Cmd) pushIndex(ctx context.Context, upCtx *upbound.Context, repo name.Repository, imgs ...v1.Image) error {
 	kc := authn.NewMultiKeychain(
 		authn.NewKeychainFromHelper(
 			credhelper.New(
@@ -178,11 +269,51 @@ func (c *Cmd) pushImage(ctx context.Context, upCtx *upbound.Context, tag name.Ta
 		authn.DefaultKeychain,
 	)
 
-	return upterm.WrapWithSuccessSpinner(fmt.Sprintf("Pushing %s", tag), upterm.CheckmarkSuccessSpinner, func() error {
-		return remote.Write(tag, img,
-			remote.WithAuthFromKeychain(kc),
-			remote.WithContext(ctx),
-			remote.WithTransport(c.transport),
-		)
-	})
+	// Push the images by digest.
+	for _, img := range imgs {
+		dgst, err := img.Digest()
+		if err != nil {
+			return err
+		}
+		err = c.pushImage(ctx, upCtx, repo.Digest(dgst.String()), img)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Build an index and push it. This is a little superfluous if there's
+	// only one image (single architecture), but we generate configuration
+	// dependencies on embedded functions assuming there's an index, so we
+	// push an index regardless of whether we really need one.
+	idx, err := xpkg.BuildIndex(imgs...)
+	if err != nil {
+		return err
+	}
+	dgst, err := idx.Digest()
+	if err != nil {
+		return err
+	}
+	return remote.WriteIndex(repo.Digest(dgst.String()), idx,
+		remote.WithAuthFromKeychain(kc),
+		remote.WithContext(ctx),
+		remote.WithTransport(c.transport),
+	)
+}
+
+func (c *Cmd) pushImage(ctx context.Context, upCtx *upbound.Context, ref name.Reference, img v1.Image) error {
+	kc := authn.NewMultiKeychain(
+		authn.NewKeychainFromHelper(
+			credhelper.New(
+				credhelper.WithDomain(upCtx.Domain.Hostname()),
+				credhelper.WithProfile(c.Flags.Profile),
+			),
+		),
+		authn.DefaultKeychain,
+	)
+
+	return remote.Write(ref, img,
+		remote.WithAuthFromKeychain(kc),
+		remote.WithContext(ctx),
+		remote.WithTransport(c.transport),
+	)
 }

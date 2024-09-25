@@ -19,111 +19,252 @@ import (
 	"embed"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 
-	metav1 "github.com/crossplane/crossplane/apis/pkg/meta/v1"
+	xpmetav1 "github.com/crossplane/crossplane/apis/pkg/meta/v1"
 	"github.com/google/go-containerregistry/pkg/name"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
 	"github.com/pterm/pterm"
 	"github.com/spf13/afero"
 	"gotest.tools/v3/assert"
 	"gotest.tools/v3/assert/cmp"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/yaml"
 
 	"github.com/upbound/up/internal/xpkg"
 	xpkgmarshaler "github.com/upbound/up/internal/xpkg/dep/marshaler/xpkg"
+	"github.com/upbound/up/internal/xpkg/functions"
 	"github.com/upbound/up/pkg/apis/project/v1alpha1"
 )
 
 //go:embed testdata/configuration-getting-started/**
 var configurationGettingStarted embed.FS
 
+//go:embed testdata/project-embedded-functions/**
+var projectEmbeddedFunctions embed.FS
+
 func TestBuild(t *testing.T) {
-	projFS := afero.NewBasePathFs(afero.FromIOFS{FS: configurationGettingStarted}, "testdata/configuration-getting-started")
-	outFS := afero.NewMemMapFs()
-
-	c := &Cmd{
-		ProjectFile: "upbound.yaml",
-		Tag:         "unittest",
-		OutputDir:   "_output",
-
-		projFS:   projFS,
-		outputFS: outFS,
+	tcs := map[string]struct {
+		projFS              afero.Fs
+		outputFile          string
+		expectedFunctions   []*xpmetav1.Function
+		expectedObjectCount int
+	}{
+		"ConfigurationOnly": {
+			projFS: afero.NewBasePathFs(
+				afero.FromIOFS{FS: configurationGettingStarted},
+				"testdata/configuration-getting-started",
+			),
+			outputFile:        "_output/configuration-getting-started.uppkg",
+			expectedFunctions: nil,
+			// 8 APIs = 8 XRDs + 8 compositions.
+			expectedObjectCount: 16,
+		},
+		"EmbeddedFunctions": {
+			projFS: afero.NewBasePathFs(
+				afero.FromIOFS{FS: projectEmbeddedFunctions},
+				"testdata/project-embedded-functions",
+			),
+			outputFile: "_output/project-embedded-functions.uppkg",
+			expectedFunctions: []*xpmetav1.Function{
+				{
+					TypeMeta: metav1.TypeMeta{
+						APIVersion: xpmetav1.SchemeGroupVersion.String(),
+						Kind:       xpmetav1.FunctionKind,
+					},
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "project-embedded-functions-xcluster",
+						Annotations: map[string]string{
+							"meta.crossplane.io/maintainer":  "Upbound <support@upbound.io>",
+							"meta.crossplane.io/source":      "github.com/upbound/project-getting-started",
+							"meta.crossplane.io/license":     "Apache-2.0",
+							"meta.crossplane.io/description": "Function xcluster from project project-embedded-functions",
+						},
+					},
+				},
+				{
+					TypeMeta: metav1.TypeMeta{
+						APIVersion: xpmetav1.SchemeGroupVersion.String(),
+						Kind:       xpmetav1.FunctionKind,
+					},
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "project-embedded-functions-xnetwork",
+						Annotations: map[string]string{
+							"meta.crossplane.io/maintainer":  "Upbound <support@upbound.io>",
+							"meta.crossplane.io/source":      "github.com/upbound/project-getting-started",
+							"meta.crossplane.io/license":     "Apache-2.0",
+							"meta.crossplane.io/description": "Function xnetwork from project project-embedded-functions",
+						},
+					},
+				},
+				{
+					TypeMeta: metav1.TypeMeta{
+						APIVersion: xpmetav1.SchemeGroupVersion.String(),
+						Kind:       xpmetav1.FunctionKind,
+					},
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "project-embedded-functions-xsubnetwork",
+						Annotations: map[string]string{
+							"meta.crossplane.io/maintainer":  "Upbound <support@upbound.io>",
+							"meta.crossplane.io/source":      "github.com/upbound/project-getting-started",
+							"meta.crossplane.io/license":     "Apache-2.0",
+							"meta.crossplane.io/description": "Function xsubnetwork from project project-embedded-functions",
+						},
+					},
+				},
+			},
+			// 3 APIs = 3 XRDs + 3 compositions.
+			expectedObjectCount: 6,
+		},
 	}
 
-	// Parse the upbound.yaml from the example so we can validate that certain
-	// fields were copied correctly later in the test.
-	var project v1alpha1.Project
-	y, err := afero.ReadFile(projFS, "upbound.yaml")
-	assert.NilError(t, err)
-	err = yaml.Unmarshal(y, &project)
-	assert.NilError(t, err)
+	for testName, tc := range tcs {
+		// Pin loop vars.
+		testName, tc := testName, tc
+		t.Run(testName, func(t *testing.T) {
+			t.Parallel()
 
-	// Build the package.
-	err = c.Run(context.Background(), &pterm.BasicTextPrinter{
-		Style:  pterm.DefaultBasicText.Style,
-		Writer: &TestWriter{t},
-	})
-	assert.NilError(t, err)
+			outFS := afero.NewMemMapFs()
+			c := &Cmd{
+				ProjectFile: "upbound.yaml",
+				OutputDir:   "_output",
 
-	// Validate the package:
-	// 1. Extract it to make sure it's a valid OCI image tarball.
-	// 2. Unmarshal it to make sure it's a valid Crossplane package.
-	// 3. Lint it to make sure it's a valid Crossplane Configuration package.
-	// 4. Check that the package metadata is correctly constructed.
-	// 5. Check that the package has the right number of objects in it.
-	imgTag, err := name.NewTag(fmt.Sprintf("%s:%s", project.Spec.Repository, c.Tag))
-	assert.NilError(t, err)
-	img, err := tarball.Image(func() (io.ReadCloser, error) {
-		return outFS.Open("_output/configuration-getting-started-unittest.xpkg")
-	}, &imgTag)
-	assert.NilError(t, err)
+				projFS:             tc.projFS,
+				outputFS:           outFS,
+				functionIdentifier: functions.FakeIdentifier,
+			}
 
-	m, err := xpkgmarshaler.NewMarshaler()
-	assert.NilError(t, err)
-	pkg, err := m.FromImage(xpkg.Image{
-		Image: img,
-	})
-	assert.NilError(t, err)
+			// Parse the upbound.yaml from the example so we can validate that certain
+			// fields were copied correctly later in the test.
+			var project v1alpha1.Project
+			y, err := afero.ReadFile(c.projFS, "upbound.yaml")
+			assert.NilError(t, err)
+			err = yaml.Unmarshal(y, &project)
+			assert.NilError(t, err)
 
-	linter := xpkg.NewConfigurationLinter()
-	err = linter.Lint(&PackageAdapter{pkg})
-	assert.NilError(t, err)
+			// Build the package.
+			err = c.Run(context.Background(), &pterm.BasicTextPrinter{
+				Style:  pterm.DefaultBasicText.Style,
+				Writer: &TestWriter{t},
+			})
+			assert.NilError(t, err)
 
-	meta := pkg.Meta()
-	assert.DeepEqual(t, meta, &metav1.Configuration{
-		TypeMeta: v1.TypeMeta{
-			APIVersion: metav1.SchemeGroupVersion.String(),
-			Kind:       metav1.ConfigurationKind,
-		},
-		ObjectMeta: v1.ObjectMeta{
-			Name: project.Name,
-			Annotations: map[string]string{
-				"meta.crossplane.io/maintainer":  project.Spec.Maintainer,
-				"meta.crossplane.io/source":      project.Spec.Source,
-				"meta.crossplane.io/license":     project.Spec.License,
-				"meta.crossplane.io/description": project.Spec.Description,
-				"meta.crossplane.io/readme":      project.Spec.Readme,
-			},
-		},
-		Spec: metav1.ConfigurationSpec{
-			MetaSpec: metav1.MetaSpec{
-				Crossplane: project.Spec.Crossplane,
-				DependsOn:  project.Spec.DependsOn,
-			},
-		},
-	})
+			// List the built packages load them from the output file.
+			cfgTag, err := name.NewTag(fmt.Sprintf("%s:%s", project.Spec.Repository, ConfigurationTag))
+			assert.NilError(t, err)
+			opener := func() (io.ReadCloser, error) {
+				return outFS.Open(tc.outputFile)
+			}
+			mfst, err := tarball.LoadManifest(opener)
+			assert.NilError(t, err)
 
-	objs := pkg.Objects()
-	// TODO(adamwg): There are 8 APIs, which should mean 16 objects - 8 XRDs and
-	// 8 compositions. But right now we generate CRDs during parsing and inject
-	// them into the package as well, which doubles the count. This assertion
-	// will need to change when we refactor the dependency manager to generate
-	// the CRDs after, rather than during, package loading.
-	assert.Assert(t, cmp.Len(objs, 32))
+			var (
+				fnImages = make(map[name.Repository][]v1.Image)
+				cfgImage v1.Image
+			)
+			for _, desc := range mfst {
+				if slices.Contains(desc.RepoTags, cfgTag.String()) {
+					cfgImage, err = tarball.Image(opener, &cfgTag)
+					assert.NilError(t, err)
+				} else {
+					fnTag, err := name.NewTag(desc.RepoTags[0])
+					assert.NilError(t, err)
+					fnImage, err := tarball.Image(opener, &fnTag)
+					assert.NilError(t, err)
+					fnImages[fnTag.Repository] = append(fnImages[fnTag.Repository], fnImage)
+				}
+			}
+
+			// Validate the function packages and collect the dependencies that
+			// should have been generated for the configuration.
+			var fnDeps []xpmetav1.Dependency
+			assert.Equal(t, len(tc.expectedFunctions), len(fnImages))
+			for repo, images := range fnImages {
+				// There should be two images, one for each of the two default
+				// architectures.
+				assert.Assert(t, cmp.Len(images, 2))
+				image := images[0]
+
+				m, err := xpkgmarshaler.NewMarshaler()
+				assert.NilError(t, err)
+				pkg, err := m.FromImage(xpkg.Image{
+					Image: image,
+				})
+				assert.NilError(t, err)
+
+				linter := xpkg.NewFunctionLinter()
+				err = linter.Lint(&PackageAdapter{pkg})
+				assert.NilError(t, err)
+
+				// Build an index so we know the digest of the desired
+				// dependency.
+				idx, err := xpkg.BuildIndex(images...)
+				assert.NilError(t, err)
+				dgst, err := idx.Digest()
+				assert.NilError(t, err)
+				fnDeps = append(fnDeps, xpmetav1.Dependency{
+					Function: ptr.To(repo.String()),
+					Version:  dgst.String(),
+				})
+
+				fnMeta, ok := pkg.Meta().(*xpmetav1.Function)
+				assert.Assert(t, ok, "unexpected metadata type for function")
+				assert.Assert(t, cmp.Contains(tc.expectedFunctions, fnMeta))
+			}
+
+			// Validate the configuration package.
+			m, err := xpkgmarshaler.NewMarshaler()
+			assert.NilError(t, err)
+			pkg, err := m.FromImage(xpkg.Image{
+				Image: cfgImage,
+			})
+			assert.NilError(t, err)
+
+			linter := xpkg.NewConfigurationLinter()
+			err = linter.Lint(&PackageAdapter{pkg})
+			assert.NilError(t, err)
+
+			cfgMeta, ok := pkg.Meta().(*xpmetav1.Configuration)
+			assert.Assert(t, ok, "unexpected metadata type for configuration")
+			assert.DeepEqual(t, cfgMeta.TypeMeta, metav1.TypeMeta{
+				APIVersion: xpmetav1.SchemeGroupVersion.String(),
+				Kind:       xpmetav1.ConfigurationKind,
+			})
+			assert.DeepEqual(t, cfgMeta.ObjectMeta, metav1.ObjectMeta{
+				Name: project.Name,
+				Annotations: map[string]string{
+					"meta.crossplane.io/maintainer":  project.Spec.Maintainer,
+					"meta.crossplane.io/source":      project.Spec.Source,
+					"meta.crossplane.io/license":     project.Spec.License,
+					"meta.crossplane.io/description": project.Spec.Description,
+					"meta.crossplane.io/readme":      project.Spec.Readme,
+				},
+			})
+			assert.DeepEqual(t, cfgMeta.Spec.MetaSpec.Crossplane, project.Spec.Crossplane)
+			// Validate that the configuration depends on all the project
+			// dependencies and the embedded functions.
+			assert.Assert(t, cmp.Len(cfgMeta.Spec.MetaSpec.DependsOn, len(project.Spec.DependsOn)+len(fnImages)))
+			for _, dep := range project.Spec.DependsOn {
+				assert.Assert(t, cmp.Contains(cfgMeta.Spec.MetaSpec.DependsOn, dep))
+			}
+			for _, dep := range fnDeps {
+				assert.Assert(t, cmp.Contains(cfgMeta.Spec.MetaSpec.DependsOn, dep))
+			}
+
+			objs := pkg.Objects()
+			// TODO(adamwg): Right now we generate CRDs during parsing and
+			// inject them into the package, which doubles the object
+			// count. This assertion will need to change when we refactor the
+			// dependency manager to generate the CRDs after, rather than
+			// during, package loading.
+			assert.Assert(t, cmp.Len(objs, 2*tc.expectedObjectCount))
+		})
+	}
 }
 
 type TestWriter struct {
