@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
 	"github.com/crossplane/crossplane-runtime/pkg/parser"
@@ -31,6 +32,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
 	"github.com/pterm/pterm"
 	"github.com/spf13/afero"
+	"golang.org/x/sync/errgroup"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/yaml"
 
@@ -78,6 +80,8 @@ func (c *Cmd) AfterApply() error {
 }
 
 func (c *Cmd) Run(ctx context.Context, p pterm.TextPrinter) error { //nolint:gocyclo // This is fine.
+	pterm.EnableStyling()
+
 	project, paths, err := c.parseProject()
 	if err != nil {
 		return err
@@ -99,29 +103,47 @@ func (c *Cmd) Run(ctx context.Context, p pterm.TextPrinter) error { //nolint:goc
 		},
 	}
 
-	// Find embedded functions, build their images, and add them as dependencies
-	// to the configuration.
 	functionsSource := afero.NewBasePathFs(c.projFS, paths.Functions)
-	imgMap, deps, err := c.buildFunctions(ctx, functionsSource, project)
-	if err != nil {
-		return err
-	}
-	cfg.Spec.DependsOn = append(cfg.Spec.DependsOn, deps...)
-
-	// Collect APIs (composites). By default we search the whole project
-	// directory except the examples directory.
+	// By default we search the whole project directory except the examples
+	// directory.
 	apisSource := c.projFS
 	apiExcludes := []string{paths.Examples}
 	if paths.APIs != "/" {
 		apisSource = afero.NewBasePathFs(c.projFS, paths.APIs)
 		apiExcludes = []string{}
 	}
-	packageFS, err := collectComposites(apisSource, apiExcludes)
+
+	// In parallel:
+	// * Find embedded functions and build their packages.
+	// * Collect APIs (composites).
+	var imgMap imageTagMap
+	eg, ctx := errgroup.WithContext(ctx)
+	eg.Go(func() error {
+		imgs, deps, err := c.buildFunctions(ctx, functionsSource, project)
+		if err != nil {
+			return err
+		}
+
+		imgMap = imgs
+		cfg.Spec.DependsOn = append(cfg.Spec.DependsOn, deps...)
+
+		return nil
+	})
+
+	// Collect APIs (composites).
+	var packageFS afero.Fs
+	eg.Go(func() error {
+		pfs, err := collectComposites(apisSource, apiExcludes)
+		packageFS = pfs
+		return err
+	})
+
+	err = upterm.WrapWithSuccessSpinner("Building functions", upterm.CheckmarkSuccessSpinner, eg.Wait)
 	if err != nil {
 		return err
 	}
 
-	// Add the package metadata.
+	// Add the package metadata to the collected composites.
 	y, err := yaml.Marshal(cfg)
 	if err != nil {
 		return errors.Wrap(err, "failed to marshal package metadata")
@@ -131,6 +153,7 @@ func (c *Cmd) Run(ctx context.Context, p pterm.TextPrinter) error { //nolint:goc
 		return errors.Wrap(err, "failed to write package metadata")
 	}
 
+	// Build the configuration package from the constructed filesystem.
 	pp, err := pyaml.New()
 	if err != nil {
 		return errors.Wrap(err, "failed to create parser")
@@ -161,6 +184,8 @@ func (c *Cmd) Run(ctx context.Context, p pterm.TextPrinter) error { //nolint:goc
 		return err
 	}
 
+	// Write out the packages to a file, which can be consumed by up project
+	// push.
 	imgTag, err := name.NewTag(fmt.Sprintf("%s:%s", project.Spec.Repository, ConfigurationTag))
 	if err != nil {
 		return errors.Wrap(err, "failed to construct image tag")
@@ -241,12 +266,17 @@ func (c *Cmd) parseProject() (*v1alpha1.Project, *v1alpha1.ProjectPaths, error) 
 	return &project, paths, nil
 }
 
+type imageTagMap map[name.Tag]v1.Image
+
 // buildFunctions builds the embedded functions found in directories at the top
 // level of the provided filesystem. The resulting images are returned in a map
 // where the keys are their tags, suitable for writing to a file with
 // go-containerregistry's `tarball.MultiWrite`.
-func (c *Cmd) buildFunctions(ctx context.Context, fromFS afero.Fs, project *v1alpha1.Project) (map[name.Tag]v1.Image, []xpmetav1.Dependency, error) { //nolint:gocyclo // This is fine.
-	imgMap := make(map[name.Tag]v1.Image)
+func (c *Cmd) buildFunctions(ctx context.Context, fromFS afero.Fs, project *v1alpha1.Project) (imageTagMap, []xpmetav1.Dependency, error) { //nolint:gocyclo // This is fine.
+	var (
+		imgMap = make(map[name.Tag]v1.Image)
+		imgMu  sync.Mutex
+	)
 
 	infos, err := afero.ReadDir(fromFS, "/")
 	switch {
@@ -264,11 +294,14 @@ func (c *Cmd) buildFunctions(ctx context.Context, fromFS afero.Fs, project *v1al
 		}
 	}
 
-	deps := make([]xpmetav1.Dependency, 0, len(fnDirs))
+	deps := make([]xpmetav1.Dependency, len(fnDirs))
+	eg, ctx := errgroup.WithContext(ctx)
 
-	spinner := upterm.CheckmarkSuccessSpinner.WithShowTimer(true)
-	for _, fnName := range fnDirs {
-		err := upterm.WrapWithSuccessSpinner(fmt.Sprintf("Building function %s", fnName), spinner, func() error {
+	for i, fnName := range fnDirs {
+		// Pin loop vars
+		i := i
+		fnName := fnName
+		eg.Go(func() error {
 			fnRepo := fmt.Sprintf("%s_%s", project.Spec.Repository, fnName)
 			fnFS := afero.NewBasePathFs(fromFS, fnName)
 			imgs, err := c.buildFunction(ctx, fnFS, project, fnName)
@@ -287,7 +320,9 @@ func (c *Cmd) buildFunctions(ctx context.Context, fromFS afero.Fs, project *v1al
 				if err != nil {
 					return errors.Wrapf(err, "failed to construct tag for function image %q", fnName)
 				}
+				imgMu.Lock()
 				imgMap[imgTag] = img
+				imgMu.Unlock()
 			}
 
 			// Construct an index so we know the digest for the dependency. This
@@ -300,15 +335,17 @@ func (c *Cmd) buildFunctions(ctx context.Context, fromFS afero.Fs, project *v1al
 			if err != nil {
 				return errors.Wrapf(err, "failed to get index digest for function image %q", fnName)
 			}
-			deps = append(deps, xpmetav1.Dependency{
+			deps[i] = xpmetav1.Dependency{
 				Function: &fnRepo,
 				Version:  dgst.String(),
-			})
+			}
 			return nil
 		})
-		if err != nil {
-			return nil, nil, err
-		}
+	}
+
+	err = eg.Wait()
+	if err != nil {
+		return nil, nil, err
 	}
 
 	return imgMap, deps, nil

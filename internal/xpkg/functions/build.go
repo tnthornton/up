@@ -36,6 +36,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
 	"github.com/spf13/afero"
+	"golang.org/x/sync/errgroup"
 	"k8s.io/apimachinery/pkg/util/rand"
 )
 
@@ -128,35 +129,41 @@ func (b *dockerBuilder) Build(ctx context.Context, fromFS afero.Fs, architecture
 	tag := fmt.Sprintf("up-build:%s", rand.String(12))
 
 	images := make([]v1.Image, len(architectures))
+	eg, ctx := errgroup.WithContext(ctx)
 	for i, arch := range architectures {
-		dockerContext := bytes.NewReader(contextTar)
-		// We tag the image only so we can reliably get it back from the Docker
-		// daemon. This tag never gets used outside of the build process.
-		archTag := fmt.Sprintf("%s-%s", tag, arch)
-		opts := types.ImageBuildOptions{
-			Tags:           []string{archTag},
-			Platform:       "linux/" + arch,
-			SuppressOutput: true,
-		}
-		_, err := cl.ImageBuild(ctx, dockerContext, opts)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to build image")
-		}
+		// Pin loop vars
+		i, arch := i, arch
+		eg.Go(func() error {
+			dockerContext := bytes.NewReader(contextTar)
+			// We tag the image only so we can reliably get it back from the Docker
+			// daemon. This tag never gets used outside of the build process.
+			archTag := fmt.Sprintf("%s-%s", tag, arch)
+			opts := types.ImageBuildOptions{
+				Tags:           []string{archTag},
+				Platform:       "linux/" + arch,
+				SuppressOutput: true,
+			}
+			_, err := cl.ImageBuild(ctx, dockerContext, opts)
+			if err != nil {
+				return errors.Wrap(err, "failed to build image")
+			}
 
-		ref, err := name.NewTag(archTag)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to parse image digest from build response")
-		}
+			ref, err := name.NewTag(archTag)
+			if err != nil {
+				return errors.Wrap(err, "failed to parse image digest from build response")
+			}
 
-		img, err := daemon.Image(ref, daemon.WithContext(ctx))
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to fetch built image from docker daemon")
-		}
+			img, err := daemon.Image(ref, daemon.WithContext(ctx))
+			if err != nil {
+				return errors.Wrap(err, "failed to fetch built image from docker daemon")
+			}
 
-		images[i] = img
+			images[i] = img
+			return nil
+		})
 	}
 
-	return images, nil
+	return images, eg.Wait()
 }
 
 // kclBuilder builds functions written in KCL by injecting their code into a
@@ -187,45 +194,54 @@ func (b *kclBuilder) Build(ctx context.Context, fromFS afero.Fs, architectures [
 	}
 
 	images := make([]v1.Image, len(architectures))
+	eg, _ := errgroup.WithContext(ctx)
 	for i, arch := range architectures {
-		baseImg, err := remote.Image(baseRef, remote.WithPlatform(v1.Platform{
-			OS:           "linux",
-			Architecture: arch,
-		}))
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to pull KCL base image")
-		}
-		baseImg = cache.Image(baseImg, cch)
+		// Pin loop vars
+		i, arch := i, arch
+		eg.Go(func() error {
+			// NOTE: Don't pass remote.WithContext(), since fetching of remote
+			// layers uses the given context and that doesn't happen until well
+			// after this function returns.
+			baseImg, err := remote.Image(baseRef, remote.WithPlatform(v1.Platform{
+				OS:           "linux",
+				Architecture: arch,
+			}))
+			if err != nil {
+				return errors.Wrap(err, "failed to pull KCL base image")
+			}
+			baseImg = cache.Image(baseImg, cch)
 
-		cfg, err := baseImg.ConfigFile()
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to get config from KCL base image")
-		}
-		if cfg.Architecture != arch {
-			return nil, errors.Errorf("KCL base image not available for architecture %q", arch)
-		}
+			cfg, err := baseImg.ConfigFile()
+			if err != nil {
+				return errors.Wrap(err, "failed to get config from KCL base image")
+			}
+			if cfg.Architecture != arch {
+				return errors.Errorf("KCL base image not available for architecture %q", arch)
+			}
 
-		src, err := fsToTar(fromFS, "/src")
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to tar layer contents")
-		}
+			src, err := fsToTar(fromFS, "/src")
+			if err != nil {
+				return errors.Wrap(err, "failed to tar layer contents")
+			}
 
-		codeLayer, err := tarball.LayerFromOpener(func() (io.ReadCloser, error) {
-			return io.NopCloser(bytes.NewReader(src)), nil
+			codeLayer, err := tarball.LayerFromOpener(func() (io.ReadCloser, error) {
+				return io.NopCloser(bytes.NewReader(src)), nil
+			})
+			if err != nil {
+				return errors.Wrap(err, "failed to create code layer")
+			}
+
+			img, err := mutate.AppendLayers(baseImg, codeLayer)
+			if err != nil {
+				return errors.Wrap(err, "failed to add code to image")
+			}
+
+			images[i] = img
+			return nil
 		})
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to create code layer")
-		}
-
-		img, err := mutate.AppendLayers(baseImg, codeLayer)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to add code to image")
-		}
-
-		images[i] = img
 	}
 
-	return images, nil
+	return images, eg.Wait()
 }
 
 // fakeBuilder builds empty images with correct configs. It is intended for use
