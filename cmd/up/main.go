@@ -118,7 +118,7 @@ type cli struct {
 	XRD         xrd.Cmd         `cmd:"" group:"Develop with Crossplane" help:"Manage XRDs from Composite Resources(XR) or Claims(XRC)."`
 	Composition composition.Cmd `cmd:"" group:"Develop with Crossplane" help:"Manage Compositions."`
 	Local       local.Cmd       `cmd:"" group:"Develop with Crossplane" help:"Interact with a local development control plane."`
-	XPKG        xpkg.Cmd        `cmd:"" group:"Develop with Crossplane" help:"Package configurations, functions, and providers for distribution."`
+	XPKG        xpkg.Cmd        `cmd:"" group:"Develop with Crossplane" maturity:"deprecated" help:"Deprecated. Please migrate to up project or use the crossplane CLI."`
 	XPLS        xpls.Cmd        `cmd:"" group:"Develop with Crossplane" help:"Start xpls language server."`
 
 	// Configure up
@@ -153,7 +153,6 @@ type alpha struct {
 	// This nudges users towards the stable variant when they attempt to emit help.
 	ControlPlane  controlplane.Cmd  `cmd:"" hidden:"" name:"controlplane" aliases:"ctp" help:"Interact with control planes in the current context, both in the cloud and in a local space."`
 	Upbound       upbound.Cmd       `cmd:"" maturity:"alpha" help:"Interact with Upbound."`
-	XPKG          xpkg.Cmd          `cmd:"" maturity:"alpha" help:"Interact with UXP packages."`
 	Migration     migration.Cmd     `cmd:"" maturity:"alpha" help:"Migrate control planes to Upbound Managed Control Planes."`
 	Trace         trace.Cmd         `cmd:"" maturity:"alpha" hidden:"" help:"Trace a Crossplane resource."`
 	TviewTemplate tviewtemplate.Cmd `cmd:"" maturity:"alpha" hidden:"" help:"TView example."`

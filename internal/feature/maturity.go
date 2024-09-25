@@ -26,8 +26,9 @@ type Maturity string
 
 // Currently supported maturity levels.
 const (
-	Alpha  Maturity = "alpha"
-	Stable Maturity = "stable"
+	Alpha      Maturity = "alpha"
+	Stable     Maturity = "stable"
+	Deprecated Maturity = "deprecated"
 )
 
 // HideMaturity hides commands that are not at the specified level of maturity.
