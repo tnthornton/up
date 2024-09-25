@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"os"
 	"path/filepath"
 
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
@@ -29,7 +28,6 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
-	"github.com/google/go-containerregistry/pkg/v1/cache"
 	"github.com/google/go-containerregistry/pkg/v1/daemon"
 	"github.com/google/go-containerregistry/pkg/v1/empty"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
@@ -41,7 +39,6 @@ import (
 )
 
 const (
-	defaultCacheRoot     = ".up/build-cache"
 	errNoSuitableBuilder = "no suitable builder found"
 )
 
@@ -179,15 +176,6 @@ func (b *kclBuilder) match(fromFS afero.Fs) (bool, error) {
 }
 
 func (b *kclBuilder) Build(ctx context.Context, fromFS afero.Fs, architectures []string) ([]v1.Image, error) {
-	// Create a cache so that we only have to pull the KCL base image once. This
-	// is important since it's a few hundred megabytes.
-	// TODO(adamwg): Make this configurable.
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, err
-	}
-	cch := cache.NewFilesystemCache(filepath.Join(home, defaultCacheRoot))
-
 	baseRef, err := name.NewTag("xpkg.upbound.io/awg/function-kcl-base:latest")
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to parse KCL base image tag")
@@ -209,7 +197,6 @@ func (b *kclBuilder) Build(ctx context.Context, fromFS afero.Fs, architectures [
 			if err != nil {
 				return errors.Wrap(err, "failed to pull KCL base image")
 			}
-			baseImg = cache.Image(baseImg, cch)
 
 			cfg, err := baseImg.ConfigFile()
 			if err != nil {

@@ -131,8 +131,9 @@ func TestBuild(t *testing.T) {
 
 			outFS := afero.NewMemMapFs()
 			c := &Cmd{
-				ProjectFile: "upbound.yaml",
-				OutputDir:   "_output",
+				ProjectFile:  "upbound.yaml",
+				OutputDir:    "_output",
+				NoBuildCache: true,
 
 				projFS:             tc.projFS,
 				outputFS:           outFS,

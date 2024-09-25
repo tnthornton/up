@@ -29,6 +29,7 @@ import (
 	xpmetav1 "github.com/crossplane/crossplane/apis/pkg/meta/v1"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/cache"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
 	"github.com/pterm/pterm"
 	"github.com/spf13/afero"
@@ -45,14 +46,18 @@ import (
 	"github.com/upbound/up/pkg/apis/project/v1alpha1"
 )
 
-// ConfigurationTag is the tag used for the configuration image in the built
-// package.
-const ConfigurationTag = "configuration"
+const (
+	// ConfigurationTag is the tag used for the configuration image in the built
+	// package.
+	ConfigurationTag = "configuration"
+)
 
 type Cmd struct {
-	ProjectFile string `short:"f" help:"Path to project definition file." default:"upbound.yaml"`
-	Repository  string `optional:"" help:"Repository for the built package. Overrides the repository specified in the project file."`
-	OutputDir   string `short:"o" help:"Path to the output directory, where packages will be written." default:"_output"`
+	ProjectFile   string `short:"f" help:"Path to project definition file." default:"upbound.yaml"`
+	Repository    string `optional:"" help:"Repository for the built package. Overrides the repository specified in the project file."`
+	OutputDir     string `short:"o" help:"Path to the output directory, where packages will be written." default:"_output"`
+	NoBuildCache  bool   `help:"Don't cache image layers while building." default:"false"`
+	BuildCacheDir string `help:"Path to the build cache directory." type:"path" default:"~/.up/build-cache"`
 
 	projFS             afero.Fs
 	outputFS           afero.Fs
@@ -197,6 +202,17 @@ func (c *Cmd) Run(ctx context.Context, p pterm.TextPrinter) error { //nolint:goc
 	err = c.outputFS.MkdirAll(c.OutputDir, 0755)
 	if err != nil {
 		return errors.Wrapf(err, "failed to create output directory %q", c.OutputDir)
+	}
+
+	if !c.NoBuildCache {
+		// Create a layer cache so that if we're building on top of base images we
+		// only pull their layers once. Note we do this here rather than in the
+		// builder because pulling layers is deferred to where we use them, which is
+		// here.
+		cch := cache.NewFilesystemCache(c.BuildCacheDir)
+		for tag, img := range imgMap {
+			imgMap[tag] = cache.Image(img, cch)
+		}
 	}
 
 	err = upterm.WrapWithSuccessSpinner(
