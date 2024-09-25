@@ -33,6 +33,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
 	"github.com/pterm/pterm"
 	"github.com/spf13/afero"
+	"golang.org/x/sync/errgroup"
 	"sigs.k8s.io/yaml"
 
 	"github.com/upbound/up-sdk-go/service/repositories"
@@ -45,12 +46,13 @@ import (
 )
 
 type Cmd struct {
-	ProjectFile string        `short:"f" help:"Path to project definition file." default:"upbound.yaml"`
-	Repository  string        `optional:"" help:"Repository to push to. Overrides the repository specified in the project file."`
-	Tag         string        `short:"t" help:"Tag for the built package. If not provided, a semver tag will be generated." default:""`
-	PackageFile string        `optional:"" help:"Package file to push. Discovered by default based on repository and tag."`
-	Create      bool          `help:"Create the configuration repository before pushing if it does not exist. Function sub-repositories will always be created automatically."`
-	Flags       upbound.Flags `embed:""`
+	ProjectFile    string        `short:"f" help:"Path to project definition file." default:"upbound.yaml"`
+	Repository     string        `optional:"" help:"Repository to push to. Overrides the repository specified in the project file."`
+	Tag            string        `short:"t" help:"Tag for the built package. If not provided, a semver tag will be generated." default:""`
+	PackageFile    string        `optional:"" help:"Package file to push. Discovered by default based on repository and tag."`
+	Create         bool          `help:"Create the configuration repository before pushing if it does not exist. Function sub-repositories will always be created automatically."`
+	MaxConcurrency uint          `help:"Maximum number of functions to build at once." env:"UP_MAX_CONCURRENCY" default:"8"`
+	Flags          upbound.Flags `embed:""`
 
 	projFS    afero.Fs
 	packageFS afero.Fs
@@ -97,6 +99,12 @@ func (c *Cmd) AfterApply(kongCtx *kong.Context) error {
 }
 
 func (c *Cmd) Run(ctx context.Context, upCtx *upbound.Context, p pterm.TextPrinter) error { //nolint:gocyclo // This isn't too complex.
+	pterm.EnableStyling()
+
+	if c.MaxConcurrency == 0 {
+		c.MaxConcurrency = 1
+	}
+
 	project, err := c.parseProject()
 	if err != nil {
 		return err
@@ -139,23 +147,37 @@ func (c *Cmd) Run(ctx context.Context, upCtx *upbound.Context, p pterm.TextPrint
 		return err
 	}
 
-	// Push all the function packages.
+	// Push all the function packages in parallel.
+	eg, egCtx := errgroup.WithContext(ctx)
+	// Semaphore to limit the number of functions we push in parallel.
+	sem := make(chan struct{}, c.MaxConcurrency)
 	for repo, images := range fnImages {
-		// Create the subrepository if needed. We can only do this for the
-		// Upbound registry; assume other registries will create on push.
-		if isUpboundRepository(upCtx, repo) {
-			err := c.createRepository(ctx, upCtx, repo)
-			if err != nil {
-				return errors.Wrapf(err, "failed to create repository for function %q", repo)
-			}
-		}
+		eg.Go(func() error {
+			sem <- struct{}{}
+			defer func() {
+				<-sem
+			}()
 
-		err = upterm.WrapWithSuccessSpinner(fmt.Sprintf("Pushing %s", repo), upterm.CheckmarkSuccessSpinner, func() error {
-			return c.pushIndex(ctx, upCtx, repo, images...)
+			// Create the subrepository if needed. We can only do this for the
+			// Upbound registry; assume other registries will create on push.
+			if isUpboundRepository(upCtx, repo) {
+				err := c.createRepository(egCtx, upCtx, repo)
+				if err != nil {
+					return errors.Wrapf(err, "failed to create repository for function %q", repo)
+				}
+			}
+
+			err = c.pushIndex(egCtx, upCtx, repo, images...)
+			if err != nil {
+				return errors.Wrapf(err, "failed to push function %q", repo)
+			}
+			return nil
 		})
-		if err != nil {
-			return errors.Wrapf(err, "failed to push function %q", repo)
-		}
+	}
+
+	err = upterm.WrapWithSuccessSpinner("Pushing functions", upterm.CheckmarkSuccessSpinner, eg.Wait)
+	if err != nil {
+		return err
 	}
 
 	// Once the functions are pushed, push the configuration package.
