@@ -53,11 +53,12 @@ const (
 )
 
 type Cmd struct {
-	ProjectFile   string `short:"f" help:"Path to project definition file." default:"upbound.yaml"`
-	Repository    string `optional:"" help:"Repository for the built package. Overrides the repository specified in the project file."`
-	OutputDir     string `short:"o" help:"Path to the output directory, where packages will be written." default:"_output"`
-	NoBuildCache  bool   `help:"Don't cache image layers while building." default:"false"`
-	BuildCacheDir string `help:"Path to the build cache directory." type:"path" default:"~/.up/build-cache"`
+	ProjectFile    string `short:"f" help:"Path to project definition file." default:"upbound.yaml"`
+	Repository     string `optional:"" help:"Repository for the built package. Overrides the repository specified in the project file."`
+	OutputDir      string `short:"o" help:"Path to the output directory, where packages will be written." default:"_output"`
+	NoBuildCache   bool   `help:"Don't cache image layers while building." default:"false"`
+	BuildCacheDir  string `help:"Path to the build cache directory." type:"path" default:"~/.up/build-cache"`
+	MaxConcurrency uint   `help:"Maximum number of functions to build at once." env:"UP_MAX_CONCURRENCY" default:"8"`
 
 	projFS             afero.Fs
 	outputFS           afero.Fs
@@ -86,6 +87,10 @@ func (c *Cmd) AfterApply() error {
 
 func (c *Cmd) Run(ctx context.Context, p pterm.TextPrinter) error { //nolint:gocyclo // This is fine.
 	pterm.EnableStyling()
+
+	if c.MaxConcurrency == 0 {
+		c.MaxConcurrency = 1
+	}
 
 	project, paths, err := c.parseProject()
 	if err != nil {
@@ -123,7 +128,14 @@ func (c *Cmd) Run(ctx context.Context, p pterm.TextPrinter) error { //nolint:goc
 	// * Collect APIs (composites).
 	var imgMap imageTagMap
 	eg, ctx := errgroup.WithContext(ctx)
+	// Semaphore to limit the number of functions we build in parallel.
+	sem := make(chan struct{}, c.MaxConcurrency)
 	eg.Go(func() error {
+		sem <- struct{}{}
+		defer func() {
+			<-sem
+		}()
+
 		imgs, deps, err := c.buildFunctions(ctx, functionsSource, project)
 		if err != nil {
 			return err
