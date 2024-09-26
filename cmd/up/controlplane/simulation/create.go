@@ -101,6 +101,8 @@ type CreateCmd struct {
 	Output            string          `short:"o" help:"Output the results of the simulation to the provided file. Defaults to standard out if not specified"`
 	Wait              bool            `default:"true" help:"Wait for the simulation to complete. If set to false, the command will exit immediately after the changeset is applied"`
 	TerminateOnFinish bool            `default:"false" help:"Terminate the simulation after the completion criteria is met"`
+
+	Flags upbound.Flags `embed:""`
 }
 
 // Validate performs custom argument validation for the create command.
@@ -134,11 +136,15 @@ func (c *CreateCmd) AfterApply(kongCtx *kong.Context, upCtx *upbound.Context) er
 		c.Group = ns
 	}
 
+	if c.Flags.Debug > 0 {
+		fmt.Fprintf(kongCtx.Stderr, "debug logging enabled\n")
+	}
+
 	return nil
 }
 
 // Run executes the create command.
-func (c *CreateCmd) Run(ctx context.Context, p pterm.TextPrinter, upCtx *upbound.Context, spacesClient client.Client) error { // nolint:gocyclo
+func (c *CreateCmd) Run(ctx context.Context, kongCtx *kong.Context, p pterm.TextPrinter, upCtx *upbound.Context, spacesClient client.Client) error { // nolint:gocyclo
 	var srcCtp spacesv1beta1.ControlPlane
 	if err := spacesClient.Get(ctx, types.NamespacedName{Name: c.SourceName, Namespace: c.Group}, &srcCtp); err != nil {
 		if kerrors.IsNotFound(err) {
@@ -201,11 +207,19 @@ func (c *CreateCmd) Run(ctx context.Context, p pterm.TextPrinter, upCtx *upbound
 	// compute + print diff
 	s, _ := stepSpinner.Start(upterm.StepCounter("Computing simulated differences", 4, totalSteps))
 
-	diffSet, err := c.createResourceDiffSet(ctx, simConfig, sim.Status.Changes)
+	if c.Flags.Debug > 0 {
+		fmt.Fprintf(kongCtx.Stderr, "total changes on the Simulation object: %d\n", len(sim.Status.Changes))
+	}
+
+	diffSet, err := c.createResourceDiffSet(ctx, kongCtx, simConfig, sim.Status.Changes)
 	if err != nil {
 		return err
 	}
 	s.Success()
+
+	if c.Flags.Debug > 0 {
+		fmt.Fprintf(kongCtx.Stderr, "created resource diff set of size: %d\n", len(diffSet))
+	}
 
 	if c.TerminateOnFinish {
 		// terminate simulation
@@ -345,7 +359,7 @@ func (c *CreateCmd) removeFieldsForDiff(u *unstructured.Unstructured) {
 // status and looks up the difference between the initial version of the
 // resource and the version currently in the API server (at the time of the
 // function call).
-func (c *CreateCmd) createResourceDiffSet(ctx context.Context, config *rest.Config, changes []spacesv1alpha1.SimulationChange) ([]diff.ResourceDiff, error) { // nolint:gocyclo
+func (c *CreateCmd) createResourceDiffSet(ctx context.Context, kongCtx *kong.Context, config *rest.Config, changes []spacesv1alpha1.SimulationChange) ([]diff.ResourceDiff, error) { // nolint:gocyclo
 	lookup, err := kube.NewDiscoveryResourceLookup(config)
 	if err != nil {
 		return []diff.ResourceDiff{}, errors.Wrap(err, "unable to create resource lookup client")
@@ -358,11 +372,18 @@ func (c *CreateCmd) createResourceDiffSet(ctx context.Context, config *rest.Conf
 
 	diffSet := make([]diff.ResourceDiff, 0, len(changes))
 
+	if c.Flags.Debug > 0 {
+		fmt.Fprintf(kongCtx.Stderr, "iterating over %d changes\n", len(changes))
+	}
+
 	for _, change := range changes {
 		gvk := schema.FromAPIVersionAndKind(change.ObjectReference.APIVersion, change.ObjectReference.Kind)
 
 		rs, err := lookup.Get(gvk)
 		if err != nil {
+			if c.Flags.Debug > 0 {
+				fmt.Fprintf(kongCtx.Stderr, "unable to find gvk from lookup %q\n", gvk)
+			}
 			return []diff.ResourceDiff{}, err
 		}
 
@@ -371,11 +392,17 @@ func (c *CreateCmd) createResourceDiffSet(ctx context.Context, config *rest.Conf
 			diffSet = append(diffSet, diff.ResourceDiff{
 				SimulationChange: change,
 			})
+			if c.Flags.Debug > 0 {
+				fmt.Fprintf(kongCtx.Stderr, "appended create to diff set for %v\n", change.ObjectReference)
+			}
 			continue
 		case spacesv1alpha1.SimulationChangeTypeDelete:
 			diffSet = append(diffSet, diff.ResourceDiff{
 				SimulationChange: change,
 			})
+			if c.Flags.Debug > 0 {
+				fmt.Fprintf(kongCtx.Stderr, "appended delete to diff set for %v\n", change.ObjectReference)
+			}
 			continue
 		}
 
@@ -398,7 +425,10 @@ func (c *CreateCmd) createResourceDiffSet(ctx context.Context, config *rest.Conf
 
 		beforeRaw, ok := after.GetAnnotations()[annotationKeyClonedState]
 		if !ok {
-			return []diff.ResourceDiff{}, errors.Wrapf(err, "object %v has no previous cloned state annotation", change.ObjectReference)
+			if c.Flags.Debug > 0 {
+				fmt.Fprintf(kongCtx.Stderr, "object %v is missing the previous cloned state annotation\n", change.ObjectReference)
+			}
+			continue
 		}
 		beforeObj, err := runtime.Decode(unstructured.UnstructuredJSONScheme, []byte(beforeRaw))
 		if err != nil {
@@ -418,6 +448,9 @@ func (c *CreateCmd) createResourceDiffSet(ctx context.Context, config *rest.Conf
 			SimulationChange: change,
 			Diff:             diffd,
 		})
+		if c.Flags.Debug > 0 {
+			fmt.Fprintf(kongCtx.Stderr, "appended update to diff set for %v\n", change.ObjectReference)
+		}
 	}
 	return diffSet, nil
 }
@@ -445,6 +478,8 @@ func (c *CreateCmd) outputDiff(diffSet []diff.ResourceDiff) error {
 // the space.
 func getControlPlaneConfig(ctx context.Context, upCtx *upbound.Context, ctp types.NamespacedName) (*rest.Config, error) {
 	po := clientcmd.NewDefaultPathOptions()
+	var err error
+
 	conf, err := po.GetStartingConfig()
 	if err != nil {
 		return nil, err
@@ -454,17 +489,25 @@ func getControlPlaneConfig(ctx context.Context, upCtx *upbound.Context, ctp type
 		return nil, err
 	}
 
-	space, ok := state.(*upctx.Space)
-	if !ok || space == nil {
-		return nil, errors.New("current kubeconfig is not pointed at a space")
+	var ok bool
+	var space *upctx.Space
+
+	if space, ok = state.(*upctx.Space); !ok {
+		if group, ok := state.(*upctx.Group); ok {
+			space = &group.Space
+		} else if ctp, ok := state.(*upctx.ControlPlane); ok {
+			space = &ctp.Group.Space
+		} else {
+			return nil, errors.New("current kubeconfig is not pointed at a space cluster")
+		}
 	}
 
-	clientConfig, err := space.BuildClient(upCtx, ctp)
+	spaceClient, err := space.BuildClient(upCtx, ctp)
 	if err != nil {
 		return nil, err
 	}
 
-	return clientConfig.ClientConfig()
+	return spaceClient.ClientConfig()
 }
 
 // loadResources builds a list of resources from the given path.
