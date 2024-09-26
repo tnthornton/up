@@ -55,8 +55,6 @@ func TestIdentify(t *testing.T) {
 	}
 
 	for name, tc := range tcs {
-		// Pin loop vars for parallel call below.
-		name, tc := name, tc
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 

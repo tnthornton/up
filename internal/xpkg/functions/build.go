@@ -128,8 +128,6 @@ func (b *dockerBuilder) Build(ctx context.Context, fromFS afero.Fs, architecture
 	images := make([]v1.Image, len(architectures))
 	eg, ctx := errgroup.WithContext(ctx)
 	for i, arch := range architectures {
-		// Pin loop vars
-		i, arch := i, arch
 		eg.Go(func() error {
 			dockerContext := bytes.NewReader(contextTar)
 			// We tag the image only so we can reliably get it back from the Docker
@@ -184,8 +182,6 @@ func (b *kclBuilder) Build(ctx context.Context, fromFS afero.Fs, architectures [
 	images := make([]v1.Image, len(architectures))
 	eg, _ := errgroup.WithContext(ctx)
 	for i, arch := range architectures {
-		// Pin loop vars
-		i, arch := i, arch
 		eg.Go(func() error {
 			// NOTE: Don't pass remote.WithContext(), since fetching of remote
 			// layers uses the given context and that doesn't happen until well

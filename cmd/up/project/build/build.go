@@ -326,9 +326,6 @@ func (c *Cmd) buildFunctions(ctx context.Context, fromFS afero.Fs, project *v1al
 	eg, ctx := errgroup.WithContext(ctx)
 
 	for i, fnName := range fnDirs {
-		// Pin loop vars
-		i := i
-		fnName := fnName
 		eg.Go(func() error {
 			fnRepo := fmt.Sprintf("%s_%s", project.Spec.Repository, fnName)
 			fnFS := afero.NewBasePathFs(fromFS, fnName)

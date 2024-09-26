@@ -124,8 +124,6 @@ func TestBuild(t *testing.T) {
 	}
 
 	for testName, tc := range tcs {
-		// Pin loop vars.
-		testName, tc := testName, tc
 		t.Run(testName, func(t *testing.T) {
 			t.Parallel()
 
