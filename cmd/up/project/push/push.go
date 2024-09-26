@@ -222,10 +222,6 @@ func collectImages(pkgFS afero.Fs, fname string, cfgTag name.Tag) (v1.Image, map
 			if err != nil {
 				return nil, nil, errors.Wrapf(err, "failed to load function %q image from package", fnTag)
 			}
-			fnImage, err = xpkg.AnnotateImage(fnImage)
-			if err != nil {
-				return nil, nil, errors.Wrapf(err, "failed to annotate function %q image", fnTag)
-			}
 			fnImages[fnTag.Repository] = append(fnImages[fnTag.Repository], fnImage)
 		}
 	}
@@ -291,6 +287,15 @@ func (c *Cmd) pushIndex(ctx context.Context, upCtx *upbound.Context, repo name.R
 		authn.DefaultKeychain,
 	)
 
+	// Build an index. This is a little superfluous if there's only one image
+	// (single architecture), but we generate configuration dependencies on
+	// embedded functions assuming there's an index, so we push an index
+	// regardless of whether we really need one.
+	idx, imgs, err := xpkg.BuildIndex(imgs...)
+	if err != nil {
+		return err
+	}
+
 	// Push the images by digest.
 	for _, img := range imgs {
 		dgst, err := img.Digest()
@@ -303,14 +308,6 @@ func (c *Cmd) pushIndex(ctx context.Context, upCtx *upbound.Context, repo name.R
 		}
 	}
 
-	// Build an index and push it. This is a little superfluous if there's
-	// only one image (single architecture), but we generate configuration
-	// dependencies on embedded functions assuming there's an index, so we
-	// push an index regardless of whether we really need one.
-	idx, err := xpkg.BuildIndex(imgs...)
-	if err != nil {
-		return err
-	}
 	dgst, err := idx.Digest()
 	if err != nil {
 		return err

@@ -202,7 +202,7 @@ func TestBuild(t *testing.T) {
 
 				// Build an index so we know the digest of the desired
 				// dependency.
-				idx, err := xpkg.BuildIndex(images...)
+				idx, _, err := xpkg.BuildIndex(images...)
 				assert.NilError(t, err)
 				dgst, err := idx.Digest()
 				assert.NilError(t, err)
