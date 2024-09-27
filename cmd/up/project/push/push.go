@@ -308,11 +308,11 @@ func (c *Cmd) pushIndex(ctx context.Context, upCtx *upbound.Context, repo name.R
 		}
 	}
 
-	dgst, err := idx.Digest()
-	if err != nil {
-		return err
-	}
-	return remote.WriteIndex(repo.Digest(dgst.String()), idx,
+	// Tag the function the same as the configuration. The configuration depends
+	// on it by digest, so this isn't necessary for things to work correctly,
+	// but it makes the Marketplace experience more intuitive for the user.
+	tag := repo.Tag(c.Tag)
+	return remote.WriteIndex(tag, idx,
 		remote.WithAuthFromKeychain(kc),
 		remote.WithContext(ctx),
 		remote.WithTransport(c.transport),
