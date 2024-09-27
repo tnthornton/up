@@ -124,15 +124,14 @@ func TestBuild(t *testing.T) {
 	}
 
 	for testName, tc := range tcs {
-		// Pin loop vars.
-		testName, tc := testName, tc
 		t.Run(testName, func(t *testing.T) {
 			t.Parallel()
 
 			outFS := afero.NewMemMapFs()
 			c := &Cmd{
-				ProjectFile: "upbound.yaml",
-				OutputDir:   "_output",
+				ProjectFile:  "upbound.yaml",
+				OutputDir:    "_output",
+				NoBuildCache: true,
 
 				projFS:             tc.projFS,
 				outputFS:           outFS,

@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
 	"github.com/crossplane/crossplane-runtime/pkg/parser"
@@ -28,9 +29,11 @@ import (
 	xpmetav1 "github.com/crossplane/crossplane/apis/pkg/meta/v1"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/cache"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
 	"github.com/pterm/pterm"
 	"github.com/spf13/afero"
+	"golang.org/x/sync/errgroup"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/yaml"
 
@@ -43,14 +46,19 @@ import (
 	"github.com/upbound/up/pkg/apis/project/v1alpha1"
 )
 
-// ConfigurationTag is the tag used for the configuration image in the built
-// package.
-const ConfigurationTag = "configuration"
+const (
+	// ConfigurationTag is the tag used for the configuration image in the built
+	// package.
+	ConfigurationTag = "configuration"
+)
 
 type Cmd struct {
-	ProjectFile string `short:"f" help:"Path to project definition file." default:"upbound.yaml"`
-	Repository  string `optional:"" help:"Repository for the built package. Overrides the repository specified in the project file."`
-	OutputDir   string `short:"o" help:"Path to the output directory, where packages will be written." default:"_output"`
+	ProjectFile    string `short:"f" help:"Path to project definition file." default:"upbound.yaml"`
+	Repository     string `optional:"" help:"Repository for the built package. Overrides the repository specified in the project file."`
+	OutputDir      string `short:"o" help:"Path to the output directory, where packages will be written." default:"_output"`
+	NoBuildCache   bool   `help:"Don't cache image layers while building." default:"false"`
+	BuildCacheDir  string `help:"Path to the build cache directory." type:"path" default:"~/.up/build-cache"`
+	MaxConcurrency uint   `help:"Maximum number of functions to build at once." env:"UP_MAX_CONCURRENCY" default:"8"`
 
 	projFS             afero.Fs
 	outputFS           afero.Fs
@@ -78,6 +86,12 @@ func (c *Cmd) AfterApply() error {
 }
 
 func (c *Cmd) Run(ctx context.Context, p pterm.TextPrinter) error { //nolint:gocyclo // This is fine.
+	pterm.EnableStyling()
+
+	if c.MaxConcurrency == 0 {
+		c.MaxConcurrency = 1
+	}
+
 	project, paths, err := c.parseProject()
 	if err != nil {
 		return err
@@ -99,29 +113,54 @@ func (c *Cmd) Run(ctx context.Context, p pterm.TextPrinter) error { //nolint:goc
 		},
 	}
 
-	// Find embedded functions, build their images, and add them as dependencies
-	// to the configuration.
 	functionsSource := afero.NewBasePathFs(c.projFS, paths.Functions)
-	imgMap, deps, err := c.buildFunctions(ctx, functionsSource, project)
-	if err != nil {
-		return err
-	}
-	cfg.Spec.DependsOn = append(cfg.Spec.DependsOn, deps...)
-
-	// Collect APIs (composites). By default we search the whole project
-	// directory except the examples directory.
+	// By default we search the whole project directory except the examples
+	// directory.
 	apisSource := c.projFS
 	apiExcludes := []string{paths.Examples}
 	if paths.APIs != "/" {
 		apisSource = afero.NewBasePathFs(c.projFS, paths.APIs)
 		apiExcludes = []string{}
 	}
-	packageFS, err := collectComposites(apisSource, apiExcludes)
+
+	// In parallel:
+	// * Find embedded functions and build their packages.
+	// * Collect APIs (composites).
+	var imgMap imageTagMap
+	eg, ctx := errgroup.WithContext(ctx)
+	// Semaphore to limit the number of functions we build in parallel.
+	sem := make(chan struct{}, c.MaxConcurrency)
+	eg.Go(func() error {
+		sem <- struct{}{}
+		defer func() {
+			<-sem
+		}()
+
+		imgs, deps, err := c.buildFunctions(ctx, functionsSource, project)
+		if err != nil {
+			return err
+		}
+
+		imgMap = imgs
+		cfg.Spec.DependsOn = append(cfg.Spec.DependsOn, deps...)
+
+		return nil
+	})
+
+	// Collect APIs (composites).
+	var packageFS afero.Fs
+	eg.Go(func() error {
+		pfs, err := collectComposites(apisSource, apiExcludes)
+		packageFS = pfs
+		return err
+	})
+
+	err = upterm.WrapWithSuccessSpinner("Building functions", upterm.CheckmarkSuccessSpinner, eg.Wait)
 	if err != nil {
 		return err
 	}
 
-	// Add the package metadata.
+	// Add the package metadata to the collected composites.
 	y, err := yaml.Marshal(cfg)
 	if err != nil {
 		return errors.Wrap(err, "failed to marshal package metadata")
@@ -131,6 +170,7 @@ func (c *Cmd) Run(ctx context.Context, p pterm.TextPrinter) error { //nolint:goc
 		return errors.Wrap(err, "failed to write package metadata")
 	}
 
+	// Build the configuration package from the constructed filesystem.
 	pp, err := pyaml.New()
 	if err != nil {
 		return errors.Wrap(err, "failed to create parser")
@@ -161,6 +201,8 @@ func (c *Cmd) Run(ctx context.Context, p pterm.TextPrinter) error { //nolint:goc
 		return err
 	}
 
+	// Write out the packages to a file, which can be consumed by up project
+	// push.
 	imgTag, err := name.NewTag(fmt.Sprintf("%s:%s", project.Spec.Repository, ConfigurationTag))
 	if err != nil {
 		return errors.Wrap(err, "failed to construct image tag")
@@ -172,6 +214,17 @@ func (c *Cmd) Run(ctx context.Context, p pterm.TextPrinter) error { //nolint:goc
 	err = c.outputFS.MkdirAll(c.OutputDir, 0755)
 	if err != nil {
 		return errors.Wrapf(err, "failed to create output directory %q", c.OutputDir)
+	}
+
+	if !c.NoBuildCache {
+		// Create a layer cache so that if we're building on top of base images we
+		// only pull their layers once. Note we do this here rather than in the
+		// builder because pulling layers is deferred to where we use them, which is
+		// here.
+		cch := cache.NewFilesystemCache(c.BuildCacheDir)
+		for tag, img := range imgMap {
+			imgMap[tag] = cache.Image(img, cch)
+		}
 	}
 
 	err = upterm.WrapWithSuccessSpinner(
@@ -241,12 +294,17 @@ func (c *Cmd) parseProject() (*v1alpha1.Project, *v1alpha1.ProjectPaths, error) 
 	return &project, paths, nil
 }
 
+type imageTagMap map[name.Tag]v1.Image
+
 // buildFunctions builds the embedded functions found in directories at the top
 // level of the provided filesystem. The resulting images are returned in a map
 // where the keys are their tags, suitable for writing to a file with
 // go-containerregistry's `tarball.MultiWrite`.
-func (c *Cmd) buildFunctions(ctx context.Context, fromFS afero.Fs, project *v1alpha1.Project) (map[name.Tag]v1.Image, []xpmetav1.Dependency, error) { //nolint:gocyclo // This is fine.
-	imgMap := make(map[name.Tag]v1.Image)
+func (c *Cmd) buildFunctions(ctx context.Context, fromFS afero.Fs, project *v1alpha1.Project) (imageTagMap, []xpmetav1.Dependency, error) { //nolint:gocyclo // This is fine.
+	var (
+		imgMap = make(map[name.Tag]v1.Image)
+		imgMu  sync.Mutex
+	)
 
 	infos, err := afero.ReadDir(fromFS, "/")
 	switch {
@@ -264,11 +322,11 @@ func (c *Cmd) buildFunctions(ctx context.Context, fromFS afero.Fs, project *v1al
 		}
 	}
 
-	deps := make([]xpmetav1.Dependency, 0, len(fnDirs))
+	deps := make([]xpmetav1.Dependency, len(fnDirs))
+	eg, ctx := errgroup.WithContext(ctx)
 
-	spinner := upterm.CheckmarkSuccessSpinner.WithShowTimer(true)
-	for _, fnName := range fnDirs {
-		err := upterm.WrapWithSuccessSpinner(fmt.Sprintf("Building function %s", fnName), spinner, func() error {
+	for i, fnName := range fnDirs {
+		eg.Go(func() error {
 			fnRepo := fmt.Sprintf("%s_%s", project.Spec.Repository, fnName)
 			fnFS := afero.NewBasePathFs(fromFS, fnName)
 			imgs, err := c.buildFunction(ctx, fnFS, project, fnName)
@@ -287,7 +345,9 @@ func (c *Cmd) buildFunctions(ctx context.Context, fromFS afero.Fs, project *v1al
 				if err != nil {
 					return errors.Wrapf(err, "failed to construct tag for function image %q", fnName)
 				}
+				imgMu.Lock()
 				imgMap[imgTag] = img
+				imgMu.Unlock()
 			}
 
 			// Construct an index so we know the digest for the dependency. This
@@ -300,15 +360,17 @@ func (c *Cmd) buildFunctions(ctx context.Context, fromFS afero.Fs, project *v1al
 			if err != nil {
 				return errors.Wrapf(err, "failed to get index digest for function image %q", fnName)
 			}
-			deps = append(deps, xpmetav1.Dependency{
+			deps[i] = xpmetav1.Dependency{
 				Function: &fnRepo,
 				Version:  dgst.String(),
-			})
+			}
 			return nil
 		})
-		if err != nil {
-			return nil, nil, err
-		}
+	}
+
+	err = eg.Wait()
+	if err != nil {
+		return nil, nil, err
 	}
 
 	return imgMap, deps, nil
