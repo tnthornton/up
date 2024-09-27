@@ -370,6 +370,21 @@ func (c *Cmd) buildFunctions(ctx context.Context, fromFS afero.Fs, project *v1al
 				return errors.Wrapf(err, "failed to build function %q", fnName)
 			}
 
+			// Construct an index so we know the digest for the dependency. This
+			// index will be reproduced when we push the image.
+			idx, imgs, err := xpkg.BuildIndex(imgs...)
+			if err != nil {
+				return errors.Wrapf(err, "failed to construct index for function image %q", fnName)
+			}
+			dgst, err := idx.Digest()
+			if err != nil {
+				return errors.Wrapf(err, "failed to get index digest for function image %q", fnName)
+			}
+			deps[i] = xpmetav1.Dependency{
+				Function: &fnRepo,
+				Version:  dgst.String(),
+			}
+
 			for _, img := range imgs {
 				cfg, err := img.ConfigFile()
 				if err != nil {
@@ -386,20 +401,6 @@ func (c *Cmd) buildFunctions(ctx context.Context, fromFS afero.Fs, project *v1al
 				imgMu.Unlock()
 			}
 
-			// Construct an index so we know the digest for the dependency. This
-			// index will be reproduced when we push the image.
-			idx, _, err := xpkg.BuildIndex(imgs...)
-			if err != nil {
-				return errors.Wrapf(err, "failed to construct index for function image %q", fnName)
-			}
-			dgst, err := idx.Digest()
-			if err != nil {
-				return errors.Wrapf(err, "failed to get index digest for function image %q", fnName)
-			}
-			deps[i] = xpmetav1.Dependency{
-				Function: &fnRepo,
-				Version:  dgst.String(),
-			}
 			return nil
 		})
 	}

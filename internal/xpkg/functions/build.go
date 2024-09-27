@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
 
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
 	"github.com/docker/docker/api/types"
@@ -35,10 +36,12 @@ import (
 	"k8s.io/apimachinery/pkg/util/rand"
 
 	"github.com/upbound/up/internal/filesystem"
+	"github.com/upbound/up/internal/xpkg"
 )
 
 const (
 	errNoSuitableBuilder = "no suitable builder found"
+	kclBaseImage         = "xpkg.upbound.io/awg/function-kcl-base:v0.10.0-7-g95c3036"
 )
 
 // Identifier knows how to identify an appropriate builder for a function based
@@ -173,7 +176,7 @@ func (b *kclBuilder) match(fromFS afero.Fs) (bool, error) {
 }
 
 func (b *kclBuilder) Build(ctx context.Context, fromFS afero.Fs, architectures []string) ([]v1.Image, error) {
-	baseRef, err := name.NewTag("xpkg.upbound.io/awg/function-kcl-base:latest")
+	baseRef, err := name.NewTag(kclBaseImage)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to parse KCL base image tag")
 	}
@@ -182,23 +185,9 @@ func (b *kclBuilder) Build(ctx context.Context, fromFS afero.Fs, architectures [
 	eg, _ := errgroup.WithContext(ctx)
 	for i, arch := range architectures {
 		eg.Go(func() error {
-			// NOTE: Don't pass remote.WithContext(), since fetching of remote
-			// layers uses the given context and that doesn't happen until well
-			// after this function returns.
-			baseImg, err := remote.Image(baseRef, remote.WithPlatform(v1.Platform{
-				OS:           "linux",
-				Architecture: arch,
-			}))
+			baseImg, err := baseImageForArch(baseRef, arch)
 			if err != nil {
-				return errors.Wrap(err, "failed to pull KCL base image")
-			}
-
-			cfg, err := baseImg.ConfigFile()
-			if err != nil {
-				return errors.Wrap(err, "failed to get config from KCL base image")
-			}
-			if cfg.Architecture != arch {
-				return errors.Errorf("KCL base image not available for architecture %q", arch)
+				return errors.Wrap(err, "failed to fetch KCL base image")
 			}
 
 			src, err := filesystem.FSToTar(fromFS, "/src")
@@ -218,12 +207,93 @@ func (b *kclBuilder) Build(ctx context.Context, fromFS afero.Fs, architectures [
 				return errors.Wrap(err, "failed to add code to image")
 			}
 
+			// Set the default source to match our source directory.
+			img, err = setImageEnvvar(img, "FUNCTION_KCL_DEFAULT_SOURCE", "/src")
+			if err != nil {
+				return errors.Wrap(err, "failed to configure KCL source path")
+			}
+
 			images[i] = img
 			return nil
 		})
 	}
 
 	return images, eg.Wait()
+}
+
+func baseImageForArch(ref name.Reference, arch string) (v1.Image, error) {
+	img, err := remote.Image(ref, remote.WithPlatform(v1.Platform{
+		OS:           "linux",
+		Architecture: arch,
+	}))
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to pull image")
+	}
+
+	cfg, err := img.ConfigFile()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get config from image")
+	}
+	if cfg.Architecture != arch {
+		return nil, errors.Errorf("image not available for architecture %q", arch)
+	}
+
+	// Remove the package layer and schema layers if present.
+	mfst, err := img.Manifest()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get manifest from image")
+	}
+	baseImage := empty.Image
+	// The RootFS contains a list of layers; since we're removing layers we need
+	// to clear it out. It will be rebuilt by the mutate package.
+	cfg.RootFS = v1.RootFS{}
+	baseImage, err = mutate.ConfigFile(baseImage, cfg)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to add configuration to base image")
+	}
+	for _, desc := range mfst.Layers {
+		if isNonBaseLayer(desc) {
+			continue
+		}
+		l, err := img.LayerByDigest(desc.Digest)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to get layer from image")
+		}
+		baseImage, err = mutate.AppendLayers(baseImage, l)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to add layer to base image")
+		}
+	}
+
+	return baseImage, nil
+}
+
+func isNonBaseLayer(desc v1.Descriptor) bool {
+	nonBaseLayerAnns := []string{
+		xpkg.PackageAnnotation,
+		xpkg.ExamplesAnnotation,
+		xpkg.SchemaKclAnnotation,
+		xpkg.SchemaPythonAnnotation,
+	}
+
+	ann := desc.Annotations[xpkg.AnnotationKey]
+	return slices.Contains(nonBaseLayerAnns, ann)
+}
+
+func setImageEnvvar(image v1.Image, key string, value string) (v1.Image, error) {
+	cfgFile, err := image.ConfigFile()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get config file")
+	}
+	cfg := cfgFile.Config
+	cfg.Env = append(cfg.Env, fmt.Sprintf("%s=%s", key, value))
+
+	image, err = mutate.Config(image, cfg)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to set config")
+	}
+
+	return image, nil
 }
 
 // fakeBuilder builds empty images with correct configs. It is intended for use
