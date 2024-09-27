@@ -122,7 +122,7 @@ from the local file system. It packages the found YAML files containing Kubernet
 object manifests into the meta data layer of the OCI image. The package manager
 will use this information to install the package into a Crossplane instance.
 
-Only configuration and provider packages are supported at this time. 
+Only configuration and provider packages are supported at this time.
 
 Example claims can be specified in the examples directory.
 

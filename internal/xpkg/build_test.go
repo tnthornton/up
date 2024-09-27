@@ -138,7 +138,7 @@ func TestBuild(t *testing.T) {
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			builder := New(tc.args.be, nil, tc.args.ex, tc.args.p, tc.args.e)
+			builder := New(tc.args.be, nil, tc.args.ex, tc.args.p, tc.args.e, nil)
 
 			_, _, err := builder.Build(context.TODO())
 
@@ -462,7 +462,7 @@ func readImg(i v1.Image) (xpkgContents, error) {
 	// package from the image (i.e. the system under test) we're left
 	// performing string parsing. For now we choose part of the auth spec,
 	// specifically the version and date used in auth yamls.
-	if strings.Contains(ps, authObjectAnno) {
+	if strings.Contains(ps, AuthObjectAnno) {
 		contents.includesAuth = strings.Contains(ps, "version: \"2023-06-23\"")
 	}
 

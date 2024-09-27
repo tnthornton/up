@@ -40,7 +40,9 @@ import (
 	"github.com/upbound/up/internal/upterm"
 	"github.com/upbound/up/internal/xpkg"
 	"github.com/upbound/up/internal/xpkg/functions"
+	"github.com/upbound/up/internal/xpkg/mutators"
 	"github.com/upbound/up/internal/xpkg/parser/examples"
+	pkcl "github.com/upbound/up/internal/xpkg/parser/kcl"
 	pyaml "github.com/upbound/up/internal/xpkg/parser/yaml"
 
 	"github.com/upbound/up/pkg/apis/project/v1alpha1"
@@ -86,6 +88,7 @@ func (c *Cmd) AfterApply() error {
 }
 
 func (c *Cmd) Run(ctx context.Context, p pterm.TextPrinter) error { //nolint:gocyclo // This is fine.
+	var mut []xpkg.Mutator
 	pterm.EnableStyling()
 
 	if c.MaxConcurrency == 0 {
@@ -98,7 +101,7 @@ func (c *Cmd) Run(ctx context.Context, p pterm.TextPrinter) error { //nolint:goc
 	}
 
 	// Scaffold a configuration based on the metadata in the project. Later
-	// we'll add any embedded functions we build to the depednencies.
+	// we'll add any embedded functions we build to the dependencies.
 	cfg := &xpmetav1.Configuration{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: xpmetav1.SchemeGroupVersion.String(),
@@ -160,6 +163,15 @@ func (c *Cmd) Run(ctx context.Context, p pterm.TextPrinter) error { //nolint:goc
 		return err
 	}
 
+	schemaKclFS, err := mutators.GenerateSchemaKcl(apisSource, apiExcludes)
+	if err != nil {
+		return err
+	}
+
+	if schemaKclFS != nil {
+		mut = append(mut, mutators.NewKclMutator(pkcl.New(schemaKclFS, "", xpkg.StreamFileMode)))
+	}
+
 	// Add the package metadata to the collected composites.
 	y, err := yaml.Marshal(cfg)
 	if err != nil {
@@ -184,6 +196,7 @@ func (c *Cmd) Run(ctx context.Context, p pterm.TextPrinter) error { //nolint:goc
 		),
 		pp,
 		examples.New(),
+		mut...,
 	)
 
 	var img v1.Image

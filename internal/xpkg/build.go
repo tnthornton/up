@@ -55,9 +55,14 @@ const (
 	errParseAuth         = "an auth extension was supplied but could not be parsed"
 	errAuthNotAnnotated  = "an auth extension was supplied but but the " + ProviderConfigKind + " object could not be found"
 	authMetaAnno         = "auth.upbound.io/group"
-	authObjectAnno       = "auth.upbound.io/config"
+	AuthObjectAnno       = "auth.upbound.io/config"
 	ProviderConfigKind   = "ProviderConfig"
 )
+
+// Mutator defines a mutation / add additional layers on an image and its config.
+type Mutator interface {
+	Mutate(v1.Image, v1.Config) (v1.Image, v1.Config, error)
+}
 
 // annotatedTeeReadCloser is a copy of io.TeeReader that implements
 // parser.AnnotatedReadCloser. It returns a Reader that writes to w what it
@@ -100,22 +105,23 @@ func (t *teeReader) Annotate() any {
 
 // Builder defines an xpkg Builder.
 type Builder struct {
-	pb parser.Backend
-	eb parser.Backend
-	ab parser.Backend
-
-	pp parser.Parser
-	ep *examples.Parser
+	pb       parser.Backend
+	eb       parser.Backend
+	ab       parser.Backend
+	pp       parser.Parser
+	ep       *examples.Parser
+	mutators []Mutator
 }
 
 // New returns a new Builder.
-func New(pkg, ab, ex parser.Backend, pp parser.Parser, ep *examples.Parser) *Builder {
+func New(pkg, ab, ex parser.Backend, pp parser.Parser, ep *examples.Parser, mutators ...Mutator) *Builder {
 	return &Builder{
-		pb: pkg,
-		ab: ab,
-		eb: ex,
-		pp: pp,
-		ep: ep,
+		pb:       pkg,
+		ab:       ab,
+		eb:       ex,
+		pp:       pp,
+		ep:       ep,
+		mutators: mutators,
 	}
 }
 
@@ -219,7 +225,7 @@ func (b *Builder) Build(ctx context.Context, opts ...BuildOpt) (v1.Image, runtim
 								if err := yaml.NewEncoder(ab).Encode(auth); err != nil {
 									return nil, nil, errors.Wrap(err, errParseAuth)
 								}
-								c.Annotations[authObjectAnno] = ab.String()
+								c.Annotations[AuthObjectAnno] = ab.String()
 								pkg.GetObjects()[x] = c
 								annotated = true
 								break
@@ -270,6 +276,15 @@ func (b *Builder) Build(ctx context.Context, opts ...BuildOpt) (v1.Image, runtim
 			return nil, nil, err
 		}
 		layers = append(layers, exLayer)
+	}
+
+	for _, mut := range b.mutators {
+		if mut != nil {
+			bOpts.base, cfg, err = mut.Mutate(bOpts.base, cfg)
+			if err != nil {
+				return nil, nil, errors.Wrap(err, "failed to apply mutator")
+			}
+		}
 	}
 
 	for _, l := range layers {

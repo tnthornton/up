@@ -54,6 +54,12 @@ const (
 	// ExamplesAnnotation is the annotation value used for the examples.yaml
 	// layer.
 	ExamplesAnnotation string = "upbound"
+	// SchemaKclAnnotation is the annotation value used for the kcl schema
+	// layer.
+	SchemaKclAnnotation string = "schema.kcl"
+	// SchemaKclModFile is the name of the kcl mod file in a Crossplane package image
+	// that contains the kcl mod.
+	SchemaKclModFile string = "models/kcl.mod"
 )
 
 func truncate(str string, num int) string {

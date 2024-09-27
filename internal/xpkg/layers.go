@@ -42,6 +42,10 @@ func Layer(r io.Reader, fileName, annotation string, fileSize int64, mode os.Fil
 		return nil, err
 	}
 
+	if err := tw.Close(); err != nil {
+		return nil, errors.Wrap(err, errTarFromStream)
+	}
+
 	// TODO(hasheddan): we currently return a new reader every time here in
 	// order to calculate digest, then subsequently write contents to disk. We
 	// can greatly improve performance during package build by avoiding reading
@@ -72,9 +76,6 @@ func writeLayer(tw *tar.Writer, hdr *tar.Header, buf io.Reader) error {
 	}
 
 	if _, err := io.Copy(tw, buf); err != nil {
-		return errors.Wrap(err, errTarFromStream)
-	}
-	if err := tw.Close(); err != nil {
 		return errors.Wrap(err, errTarFromStream)
 	}
 	return nil

@@ -50,10 +50,11 @@ var projectEmbeddedFunctions embed.FS
 
 func TestBuild(t *testing.T) {
 	tcs := map[string]struct {
-		projFS              afero.Fs
-		outputFile          string
-		expectedFunctions   []*xpmetav1.Function
-		expectedObjectCount int
+		projFS                  afero.Fs
+		outputFile              string
+		expectedFunctions       []*xpmetav1.Function
+		expectedAnnotatedLayers map[string]bool
+		expectedObjectCount     int
 	}{
 		"ConfigurationOnly": {
 			projFS: afero.NewBasePathFs(
@@ -64,6 +65,11 @@ func TestBuild(t *testing.T) {
 			expectedFunctions: nil,
 			// 8 APIs = 8 XRDs + 8 compositions.
 			expectedObjectCount: 16,
+			expectedAnnotatedLayers: map[string]bool{
+				xpkg.SchemaKclAnnotation: true,
+				xpkg.PackageAnnotation:   true,
+				xpkg.ExamplesAnnotation:  true,
+			},
 		},
 		"EmbeddedFunctions": {
 			projFS: afero.NewBasePathFs(
@@ -120,6 +126,11 @@ func TestBuild(t *testing.T) {
 			},
 			// 3 APIs = 3 XRDs + 3 compositions.
 			expectedObjectCount: 6,
+			expectedAnnotatedLayers: map[string]bool{
+				xpkg.SchemaKclAnnotation: true,
+				xpkg.PackageAnnotation:   true,
+				xpkg.ExamplesAnnotation:  false, // no-examples expected
+			},
 		},
 	}
 
@@ -170,6 +181,34 @@ func TestBuild(t *testing.T) {
 				if slices.Contains(desc.RepoTags, cfgTag.String()) {
 					cfgImage, err = tarball.Image(opener, &cfgTag)
 					assert.NilError(t, err)
+
+					cfgImage, err = xpkg.AnnotateImage(cfgImage)
+					if err != nil {
+						t.Fatalf("Failed to annotate image: %v", err)
+					}
+
+					// Check for annotations in the image manifest layers
+					manifest, err := cfgImage.Manifest()
+					assert.NilError(t, err)
+
+					foundLayers := map[string]bool{
+						xpkg.SchemaKclAnnotation: false,
+						xpkg.PackageAnnotation:   false,
+						xpkg.ExamplesAnnotation:  false,
+					}
+
+					// Iterate over manifest layers to find annotations
+					for _, layer := range manifest.Layers {
+						if value, ok := layer.Annotations[xpkg.AnnotationKey]; ok {
+							// Mark the layer as found if it's an expected annotation
+							if _, expected := foundLayers[value]; expected {
+								foundLayers[value] = true
+							}
+						}
+					}
+
+					assert.DeepEqual(t, tc.expectedAnnotatedLayers, foundLayers)
+
 				} else {
 					fnTag, err := name.NewTag(desc.RepoTags[0])
 					assert.NilError(t, err)
