@@ -352,7 +352,7 @@ func (c *Cmd) buildFunctions(ctx context.Context, fromFS afero.Fs, project *v1al
 
 			// Construct an index so we know the digest for the dependency. This
 			// index will be reproduced when we push the image.
-			idx, err := xpkg.BuildIndex(imgs...)
+			idx, _, err := xpkg.BuildIndex(imgs...)
 			if err != nil {
 				return errors.Wrapf(err, "failed to construct index for function image %q", fnName)
 			}

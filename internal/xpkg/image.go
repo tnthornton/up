@@ -86,21 +86,27 @@ func AnnotateImage(i v1.Image) (v1.Image, error) { //nolint:gocyclo
 	return mutate.ConfigFile(img, cfgFile)
 }
 
-func BuildIndex(imgs ...v1.Image) (v1.ImageIndex, error) {
+// BuildIndex applies annotations to each of the given images and then generates
+// an index for them. The annotated images are returned so that a caller can
+// push them before pushing the index, since the passed images may not match the
+// annotated images.
+func BuildIndex(imgs ...v1.Image) (v1.ImageIndex, []v1.Image, error) {
 	adds := make([]mutate.IndexAddendum, 0, len(imgs))
+	images := make([]v1.Image, 0, len(imgs))
 	for _, img := range imgs {
 		aimg, err := AnnotateImage(img)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
+		images = append(images, aimg)
 		mt, err := aimg.MediaType()
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		conf, err := aimg.ConfigFile()
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		adds = append(adds, mutate.IndexAddendum{
@@ -116,5 +122,5 @@ func BuildIndex(imgs ...v1.Image) (v1.ImageIndex, error) {
 		})
 	}
 
-	return mutate.AppendManifests(empty.Index, adds...), nil
+	return mutate.AppendManifests(empty.Index, adds...), images, nil
 }
