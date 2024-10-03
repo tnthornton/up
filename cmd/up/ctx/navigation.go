@@ -306,6 +306,7 @@ func (o *Organization) Items(ctx context.Context, upCtx *upbound.Context, navCtx
 						text:          space.GetObjectMeta().GetName() + " (unreachable)",
 						kind:          "space",
 						notSelectable: true,
+						matchingTerms: []string{space.GetObjectMeta().GetName()},
 					})
 					mu.Unlock()
 					continue
@@ -319,12 +320,14 @@ func (o *Organization) Items(ctx context.Context, upCtx *upbound.Context, navCtx
 							text:          space.GetObjectMeta().GetName() + " (unreachable)",
 							kind:          "space",
 							notSelectable: true,
+							matchingTerms: []string{space.GetObjectMeta().GetName()},
 						})
 					} else {
 						unselectableItems = append(unselectableItems, item{
 							text:          fmt.Sprintf("%s (error: %v)", space.GetObjectMeta().GetName(), err),
 							kind:          "space",
 							notSelectable: true,
+							matchingTerms: []string{space.GetObjectMeta().GetName()},
 						})
 					}
 					mu.Unlock()
