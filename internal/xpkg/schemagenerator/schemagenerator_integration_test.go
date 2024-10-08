@@ -19,6 +19,7 @@ package schemagenerator
 
 import (
 	"archive/tar"
+	"bytes"
 	"context"
 	"embed"
 	"fmt"
@@ -459,7 +460,6 @@ func compareEmbedWithTarFS(embeddedFS embed.FS, tarFS *tarfs.Fs, targetDir strin
 		if err != nil {
 			return fmt.Errorf("failed to read file %s in embeddedFS: %v", embedPath, err)
 		}
-		filteredEmbedContent := filterOutTimestamps(string(embedContent))
 
 		relativePath := strings.TrimPrefix(embedPath, targetDir+"/")
 
@@ -475,10 +475,9 @@ func compareEmbedWithTarFS(embeddedFS embed.FS, tarFS *tarfs.Fs, targetDir strin
 		if err != nil {
 			return fmt.Errorf("failed to read file %s in tarFS: %v", embedPath, err)
 		}
-		filteredTarContent := filterOutTimestamps(string(tarContent))
 
 		// Compare the contents of the embedded file and tar file
-		if filteredEmbedContent != filteredTarContent {
+		if !bytes.Equal(embedContent, tarContent) {
 			return fmt.Errorf("file content mismatch: %s", embedPath)
 		}
 
@@ -486,19 +485,4 @@ func compareEmbedWithTarFS(embeddedFS embed.FS, tarFS *tarfs.Fs, targetDir strin
 	})
 
 	return err
-}
-
-func filterOutTimestamps(content string) string {
-	var filteredContent []string
-	lines := strings.Split(content, "\n")
-
-	// Iterate over each line and filter out lines containing a timestamp pattern
-	for _, line := range lines {
-		if !strings.Contains(line, "timestamp:") { // Adjust this if needed for more patterns
-			filteredContent = append(filteredContent, line)
-		}
-	}
-
-	// Join the remaining lines back into a single string
-	return strings.Join(filteredContent, "\n")
 }

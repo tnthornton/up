@@ -137,6 +137,7 @@ func GenerateSchemaPython(ctx context.Context, fromFS afero.Fs, exclude []string
 		[]string{
 			"--input-file-type",
 			"openapi",
+			"--disable-timestamp",
 			"--input",
 			".",
 			"--output-model-type",
