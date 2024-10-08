@@ -60,6 +60,9 @@ const (
 	// SchemaKclModFile is the name of the kcl mod file in a Crossplane package image
 	// that contains the kcl mod.
 	SchemaKclModFile string = "models/kcl.mod"
+	// SchemaPythonAnnotation is the annotation value used for the python schema
+	// layer.
+	SchemaPythonAnnotation string = "schema.python"
 )
 
 func truncate(str string, num int) string {

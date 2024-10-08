@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package kcl
+package schema
 
 import (
 	"archive/tar"
@@ -24,8 +24,8 @@ import (
 	"github.com/spf13/afero"
 )
 
-// Kparser is a Kparser implementation for kcl schema.
-type Kparser struct {
+// Parser is a Parser implementation for generic schema.
+type Parser struct {
 	Filesystem afero.Fs
 	rootPath   string
 	tw         *tar.Writer
@@ -33,11 +33,11 @@ type Kparser struct {
 	tarBuf     *bytes.Buffer
 }
 
-// New creates a new Kparser instance.
-func New(filesystem afero.Fs, rootPath string, mode os.FileMode) *Kparser {
+// New creates a new Parser instance.
+func New(filesystem afero.Fs, rootPath string, mode os.FileMode) *Parser {
 	tarBuf := new(bytes.Buffer)
 	tw := tar.NewWriter(tarBuf)
-	return &Kparser{
+	return &Parser{
 		Filesystem: filesystem,
 		rootPath:   rootPath,
 		tw:         tw,
@@ -47,7 +47,7 @@ func New(filesystem afero.Fs, rootPath string, mode os.FileMode) *Kparser {
 }
 
 // Generate walks through the filesystem, collects files, and generates a tarball in a buffer.
-func (p *Kparser) Generate() ([]byte, error) {
+func (p *Parser) Generate() ([]byte, error) {
 	// Only proceed if the filesystem is not nil
 	if p.Filesystem == nil {
 		// Return nil, nil because it's allowed to be nil and no generation is required
@@ -96,7 +96,7 @@ func (p *Kparser) Generate() ([]byte, error) {
 }
 
 // addFileToTar writes a file's contents to the tarball.
-func (p *Kparser) addFileToTar(path string, buf *bytes.Buffer) error {
+func (p *Parser) addFileToTar(path string, buf *bytes.Buffer) error {
 	hdr := &tar.Header{
 		Name: path,
 		Mode: int64(p.mode),
@@ -115,7 +115,7 @@ func (p *Kparser) addFileToTar(path string, buf *bytes.Buffer) error {
 }
 
 // finalizeTar closes the tar writer and returns the tarball []byte.
-func (p *Kparser) finalizeTar() ([]byte, error) {
+func (p *Parser) finalizeTar() ([]byte, error) {
 	if err := p.tw.Close(); err != nil {
 		return nil, errors.Wrap(err, "failed to close tar writer")
 	}

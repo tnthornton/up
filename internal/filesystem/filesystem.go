@@ -15,67 +15,98 @@
 package filesystem
 
 import (
+	"archive/tar"
+	"bytes"
+	"io"
 	"io/fs"
-	"os"
 	"path/filepath"
 
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
 	"github.com/spf13/afero"
 )
 
-// writeFile writing with error checking
-func WriteFile(path string, data []byte, perm os.FileMode) error {
-	err := os.MkdirAll(filepath.Dir(path), 0o755) // nolint:gosec
-	if err != nil {
-		return errors.Wrapf(err, "failed to create directory %q", filepath.Dir(path))
-	}
-	return errors.Wrapf(os.WriteFile(path, data, perm), "failed to write file %q", path)
-}
-
-// CopyGeneratedFiles to the target file system
-func CopyGeneratedFiles(baseFolder, schemaFolder string, toFs afero.Fs) error {
-	wDir := createFileAndDirCopy(toFs, filepath.Join(baseFolder, schemaFolder), "")
-	return filepath.WalkDir(filepath.Join(baseFolder, schemaFolder), wDir)
-}
-
-// createFileAndDirCopy returns a fs.WalkDirFunc function that copies files and directories
-// from a source directory to a destination directory using the provided afero filesystem.
-func createFileAndDirCopy(afs afero.Fs, sourceRoot, destRoot string) fs.WalkDirFunc {
-	cleanRoot := filepath.Clean(sourceRoot)
-
-	return func(path string, di fs.DirEntry, err error) error {
+// CopyFilesBetweenFs copies all files from the source filesystem (fromFS) to the destination filesystem (toFS).
+// It traverses through the fromFS filesystem, skipping directories and copying only files.
+// File contents and permissions are preserved when writing to toFS.
+// Returns an error if any file read, write, or traversal operation fails.
+func CopyFilesBetweenFs(fromFS, toFS afero.Fs) error {
+	err := afero.Walk(fromFS, ".", func(path string, info fs.FileInfo, err error) error {
 		if err != nil {
-			return err // Handle any errors encountered during traversal
+			return err
+		}
+		if info.IsDir() {
+			return nil // Skip directories
 		}
 
-		// Compute relative path from the source root
-		relPath, err := filepath.Rel(cleanRoot, path)
+		// Ensure the parent directories exist on the destination filesystem
+		dir := filepath.Dir(path)
+		err = toFS.MkdirAll(dir, 0755) // Use appropriate permissions for the directories
 		if err != nil {
 			return err
 		}
 
-		// Construct the output path relative to the destination root
-		outFilePath := filepath.Join(destRoot, relPath)
-
-		// If it's a directory, use MkdirAll to create the structure
-		if di.IsDir() {
-			err := afs.MkdirAll(outFilePath, 0755)
-			if err != nil {
-				return err
-			}
-		} else {
-			// If it's a file, read the content and write it to the destination
-			content, err := os.ReadFile(filepath.Clean(path))
-			if err != nil {
-				return err
-			}
-
-			err = afero.WriteFile(afs, outFilePath, content, 0644)
-			if err != nil {
-				return err
-			}
+		// Copy the file contents
+		fileData, err := afero.ReadFile(fromFS, path)
+		if err != nil {
+			return err
+		}
+		err = afero.WriteFile(toFS, path, fileData, info.Mode())
+		if err != nil {
+			return err
 		}
 
 		return nil
+	})
+
+	return err
+}
+
+func FSToTar(f afero.Fs, prefix string) ([]byte, error) {
+	// Copied from tar.AddFS but prepend the prefix.
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	err := tw.WriteHeader(&tar.Header{
+		Name:     prefix,
+		Typeflag: tar.TypeDir,
+		Mode:     0777,
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create prefix directory in tar archive")
 	}
+	err = afero.Walk(f, ".", func(name string, info fs.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		// TODO(#49580): Handle symlinks when fs.ReadLinkFS is available.
+		if !info.Mode().IsRegular() {
+			return errors.New("tar: cannot add non-regular file")
+		}
+		h, err := tar.FileInfoHeader(info, "")
+		if err != nil {
+			return err
+		}
+		h.Name = filepath.Join(prefix, name)
+		if err := tw.WriteHeader(h); err != nil {
+			return err
+		}
+		f, err := f.Open(name)
+		if err != nil {
+			return err
+		}
+		defer f.Close() //nolint:errcheck // Copied from upstream.
+		_, err = io.Copy(tw, f)
+		return err
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to populate tar archive")
+	}
+	err = tw.Close()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to close tar archive")
+	}
+
+	return buf.Bytes(), nil
 }

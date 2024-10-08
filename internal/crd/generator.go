@@ -20,10 +20,9 @@ import (
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
 	xpv1 "github.com/crossplane/crossplane/apis/apiextensions/v1"
 	"github.com/crossplane/crossplane/xcrd"
+	"github.com/spf13/afero"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-
-	"github.com/upbound/up/internal/filesystem"
 
 	"sigs.k8s.io/yaml"
 )
@@ -59,40 +58,44 @@ func createCRDFromXRD(xrd xpv1.CompositeResourceDefinition) (*apiextensionsv1.Cu
 }
 
 // ProcessXRD generate associated CRDs
-func ProcessXRD(bs []byte, path, baseFolder string, compositePaths *[]string) error {
+func ProcessXRD(fs afero.Fs, bs []byte, path, baseFolder string) (string, string, error) {
 	var xrd xpv1.CompositeResourceDefinition
 	if err := yaml.Unmarshal(bs, &xrd); err != nil {
-		return errors.Wrapf(err, "failed to unmarshal XRD file %q", path)
+		return "", "", errors.Wrapf(err, "failed to unmarshal XRD file %q", path)
 	}
 
+	// Create CRDs from the XRD
 	xrCRD, claimCRD, err := createCRDFromXRD(xrd)
 	if err != nil {
-		return err
+		return "", "", err
 	}
 
+	var xrPath, claimPath string
+
+	// Write the XR CRD file if it exists
 	if xrCRD != nil {
-		xrPath := filepath.Join(baseFolder, path+"-xr.yaml")
+		xrPath = filepath.Join(baseFolder, path+"-xr.yaml")
 		xrCRDBytes, err := yaml.Marshal(xrCRD)
 		if err != nil {
-			return errors.Wrap(err, "failed to marshal XR CRD to YAML")
+			return "", "", errors.Wrap(err, "failed to marshal XR CRD to YAML")
 		}
-		if err := filesystem.WriteFile(xrPath, xrCRDBytes, 0o644); err != nil {
-			return err
+		if err := afero.WriteFile(fs, xrPath, xrCRDBytes, 0o644); err != nil {
+			return "", "", err
 		}
-		*compositePaths = append(*compositePaths, xrPath)
 	}
 
+	// Write the Claim CRD file if it exists
 	if claimCRD != nil {
-		claimPath := filepath.Join(baseFolder, path+"-claim.yaml")
+		claimPath = filepath.Join(baseFolder, path+"-claim.yaml")
 		claimCRDBytes, err := yaml.Marshal(claimCRD)
 		if err != nil {
-			return errors.Wrap(err, "failed to marshal claim CRD to YAML")
+			return "", "", errors.Wrap(err, "failed to marshal claim CRD to YAML")
 		}
-		if err := filesystem.WriteFile(claimPath, claimCRDBytes, 0o644); err != nil {
-			return err
+		if err := afero.WriteFile(fs, claimPath, claimCRDBytes, 0o644); err != nil {
+			return "", "", err
 		}
-		*compositePaths = append(*compositePaths, claimPath)
 	}
 
-	return nil
+	// Return the paths of the files created, or empty strings if they were not created
+	return xrPath, claimPath, nil
 }

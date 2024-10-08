@@ -19,6 +19,7 @@ import (
 	"embed"
 	"fmt"
 	"io"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -66,9 +67,10 @@ func TestBuild(t *testing.T) {
 			// 8 APIs = 8 XRDs + 8 compositions.
 			expectedObjectCount: 16,
 			expectedAnnotatedLayers: map[string]bool{
-				xpkg.SchemaKclAnnotation: true,
-				xpkg.PackageAnnotation:   true,
-				xpkg.ExamplesAnnotation:  true,
+				xpkg.SchemaKclAnnotation:    true,
+				xpkg.SchemaPythonAnnotation: true,
+				xpkg.PackageAnnotation:      true,
+				xpkg.ExamplesAnnotation:     true,
 			},
 		},
 		"EmbeddedFunctions": {
@@ -127,9 +129,10 @@ func TestBuild(t *testing.T) {
 			// 3 APIs = 3 XRDs + 3 compositions.
 			expectedObjectCount: 6,
 			expectedAnnotatedLayers: map[string]bool{
-				xpkg.SchemaKclAnnotation: true,
-				xpkg.PackageAnnotation:   true,
-				xpkg.ExamplesAnnotation:  false, // no-examples expected
+				xpkg.SchemaKclAnnotation:    true,
+				xpkg.SchemaPythonAnnotation: true,
+				xpkg.PackageAnnotation:      true,
+				xpkg.ExamplesAnnotation:     false, // no-examples expected
 			},
 		},
 	}
@@ -139,6 +142,8 @@ func TestBuild(t *testing.T) {
 			t.Parallel()
 
 			outFS := afero.NewMemMapFs()
+			mockRunner := MockSchemaRunner{}
+
 			c := &Cmd{
 				ProjectFile:  "upbound.yaml",
 				OutputDir:    "_output",
@@ -147,6 +152,7 @@ func TestBuild(t *testing.T) {
 				projFS:             tc.projFS,
 				outputFS:           outFS,
 				functionIdentifier: functions.FakeIdentifier,
+				schemaRunner:       mockRunner,
 			}
 
 			// Parse the upbound.yaml from the example so we can validate that certain
@@ -192,9 +198,10 @@ func TestBuild(t *testing.T) {
 					assert.NilError(t, err)
 
 					foundLayers := map[string]bool{
-						xpkg.SchemaKclAnnotation: false,
-						xpkg.PackageAnnotation:   false,
-						xpkg.ExamplesAnnotation:  false,
+						xpkg.SchemaKclAnnotation:    false,
+						xpkg.SchemaPythonAnnotation: false,
+						xpkg.PackageAnnotation:      false,
+						xpkg.ExamplesAnnotation:     false,
 					}
 
 					// Iterate over manifest layers to find annotations
@@ -303,6 +310,21 @@ func TestBuild(t *testing.T) {
 			assert.Assert(t, cmp.Len(objs, 2*tc.expectedObjectCount))
 		})
 	}
+}
+
+type MockSchemaRunner struct{}
+
+func (m MockSchemaRunner) Generate(ctx context.Context, fs afero.Fs, folder string, imageName string, args []string) error {
+	// Simulate generation for KCL schema files
+	if strings.Contains(imageName, "kcl") { // Check for KCL specific marker, if any
+		outputPath := "models/v1alpha1/platform_acme_co_v1alpha1_subnetwork.k"
+		_ = fs.MkdirAll("models/v1alpha1/", os.ModePerm)
+		return afero.WriteFile(fs, outputPath, []byte("mock KCL content"), os.ModePerm)
+	}
+	// Simulate generation for Python schema files
+	outputPath := "models/workdir/platform_acme_co_v1alpha1_subnetwork/io/k8s/apimachinery/pkg/apis/meta/v1.py"
+	_ = fs.MkdirAll("models/workdir/platform_acme_co_v1alpha1_subnetwork/io/k8s/apimachinery/pkg/apis/meta/", os.ModePerm)
+	return afero.WriteFile(fs, outputPath, []byte("mock Python content"), os.ModePerm)
 }
 
 type TestWriter struct {

@@ -15,13 +15,10 @@
 package functions
 
 import (
-	"archive/tar"
 	"bytes"
 	"context"
 	"fmt"
 	"io"
-	"io/fs"
-	"path/filepath"
 
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
 	"github.com/docker/docker/api/types"
@@ -36,6 +33,8 @@ import (
 	"github.com/spf13/afero"
 	"golang.org/x/sync/errgroup"
 	"k8s.io/apimachinery/pkg/util/rand"
+
+	"github.com/upbound/up/internal/filesystem"
 )
 
 const (
@@ -119,7 +118,7 @@ func (b *dockerBuilder) Build(ctx context.Context, fromFS afero.Fs, architecture
 	}
 
 	// Collect build context to send to the docker daemon.
-	contextTar, err := fsToTar(fromFS, "/")
+	contextTar, err := filesystem.FSToTar(fromFS, "/")
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to construct docker context")
 	}
@@ -202,7 +201,7 @@ func (b *kclBuilder) Build(ctx context.Context, fromFS afero.Fs, architectures [
 				return errors.Errorf("KCL base image not available for architecture %q", arch)
 			}
 
-			src, err := fsToTar(fromFS, "/src")
+			src, err := filesystem.FSToTar(fromFS, "/src")
 			if err != nil {
 				return errors.Wrap(err, "failed to tar layer contents")
 			}
@@ -255,54 +254,4 @@ func (b *fakeBuilder) Build(ctx context.Context, fromFS afero.Fs, architectures 
 	}
 
 	return images, nil
-}
-
-func fsToTar(f afero.Fs, prefix string) ([]byte, error) {
-	// Copied from tar.AddFS but prepend the prefix.
-	var buf bytes.Buffer
-	tw := tar.NewWriter(&buf)
-	err := tw.WriteHeader(&tar.Header{
-		Name:     prefix,
-		Typeflag: tar.TypeDir,
-		Mode:     0777,
-	})
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to create prefix directory in tar archive")
-	}
-	err = afero.Walk(f, ".", func(name string, info fs.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if info.IsDir() {
-			return nil
-		}
-		// TODO(#49580): Handle symlinks when fs.ReadLinkFS is available.
-		if !info.Mode().IsRegular() {
-			return errors.New("tar: cannot add non-regular file")
-		}
-		h, err := tar.FileInfoHeader(info, "")
-		if err != nil {
-			return err
-		}
-		h.Name = filepath.Join(prefix, name)
-		if err := tw.WriteHeader(h); err != nil {
-			return err
-		}
-		f, err := f.Open(name)
-		if err != nil {
-			return err
-		}
-		defer f.Close() //nolint:errcheck // Copied from upstream.
-		_, err = io.Copy(tw, f)
-		return err
-	})
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to populate tar archive")
-	}
-	err = tw.Close()
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to close tar archive")
-	}
-
-	return buf.Bytes(), nil
 }

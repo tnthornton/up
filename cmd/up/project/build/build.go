@@ -42,8 +42,10 @@ import (
 	"github.com/upbound/up/internal/xpkg/functions"
 	"github.com/upbound/up/internal/xpkg/mutators"
 	"github.com/upbound/up/internal/xpkg/parser/examples"
-	pkcl "github.com/upbound/up/internal/xpkg/parser/kcl"
+	"github.com/upbound/up/internal/xpkg/parser/schema"
 	pyaml "github.com/upbound/up/internal/xpkg/parser/yaml"
+	"github.com/upbound/up/internal/xpkg/schemagenerator"
+	"github.com/upbound/up/internal/xpkg/schemarunner"
 
 	"github.com/upbound/up/pkg/apis/project/v1alpha1"
 )
@@ -65,6 +67,7 @@ type Cmd struct {
 	projFS             afero.Fs
 	outputFS           afero.Fs
 	functionIdentifier functions.Identifier
+	schemaRunner       schemarunner.SchemaRunner
 }
 
 func (c *Cmd) AfterApply() error {
@@ -83,6 +86,7 @@ func (c *Cmd) AfterApply() error {
 	c.outputFS = afero.NewOsFs()
 
 	c.functionIdentifier = functions.DefaultIdentifier
+	c.schemaRunner = schemarunner.RealSchemaRunner{}
 
 	return nil
 }
@@ -158,18 +162,37 @@ func (c *Cmd) Run(ctx context.Context, p pterm.TextPrinter) error { //nolint:goc
 		return err
 	})
 
+	// Generate KCL Schemas
+	eg.Go(func() error {
+		kfs, err := schemagenerator.GenerateSchemaKcl(ctx, apisSource, apiExcludes, c.schemaRunner)
+		if err != nil {
+			return err
+		}
+
+		if kfs != nil {
+			mut = append(mut, mutators.NewSchemaMutator(schema.New(kfs, "", xpkg.StreamFileMode), xpkg.SchemaKclAnnotation))
+		}
+		return nil
+	})
+
+	// Generate Python Schemas
+	eg.Go(func() error {
+		pfs, err := schemagenerator.GenerateSchemaPython(ctx, apisSource, apiExcludes, c.schemaRunner)
+		if err != nil {
+			return err
+		}
+
+		if pfs != nil {
+			mut = append(mut, mutators.NewSchemaMutator(schema.New(pfs, "", xpkg.StreamFileMode), xpkg.SchemaPythonAnnotation))
+		}
+
+		return nil
+	})
+
+	// wait for go runtines
 	err = upterm.WrapWithSuccessSpinner("Building functions", upterm.CheckmarkSuccessSpinner, eg.Wait)
 	if err != nil {
 		return err
-	}
-
-	schemaKclFS, err := mutators.GenerateSchemaKcl(apisSource, apiExcludes)
-	if err != nil {
-		return err
-	}
-
-	if schemaKclFS != nil {
-		mut = append(mut, mutators.NewKclMutator(pkcl.New(schemaKclFS, "", xpkg.StreamFileMode)))
 	}
 
 	// Add the package metadata to the collected composites.
