@@ -119,6 +119,12 @@ func (r RealSchemaRunner) Generate(ctx context.Context, fromFS afero.Fs, baseFol
 		return errors.Wrapf(err, "failed to copy tar from container")
 	}
 
+	if err := cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{
+		RemoveVolumes: true,
+	}); err != nil {
+		return errors.Wrap(err, "failed to clean up container")
+	}
+
 	return nil
 }
 
