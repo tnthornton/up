@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"slices"
 
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
@@ -41,7 +42,6 @@ import (
 
 const (
 	errNoSuitableBuilder = "no suitable builder found"
-	kclBaseImage         = "xpkg.upbound.io/awg/function-kcl-base:v0.10.0-7-g95c3036"
 )
 
 // Identifier knows how to identify an appropriate builder for a function based
@@ -63,7 +63,7 @@ func (realIdentifier) Identify(fromFS afero.Fs) (Builder, error) {
 	// builders are the known builder types, in order of precedence.
 	builders := []Builder{
 		&dockerBuilder{},
-		&kclBuilder{},
+		newKCLBuilder(),
 	}
 	for _, b := range builders {
 		ok, err := b.match(fromFS)
@@ -165,7 +165,10 @@ func (b *dockerBuilder) Build(ctx context.Context, fromFS afero.Fs, architecture
 
 // kclBuilder builds functions written in KCL by injecting their code into a
 // function-kcl base image.
-type kclBuilder struct{}
+type kclBuilder struct {
+	baseImage string
+	transport http.RoundTripper
+}
 
 func (b *kclBuilder) Name() string {
 	return "kcl"
@@ -176,7 +179,7 @@ func (b *kclBuilder) match(fromFS afero.Fs) (bool, error) {
 }
 
 func (b *kclBuilder) Build(ctx context.Context, fromFS afero.Fs, architectures []string) ([]v1.Image, error) {
-	baseRef, err := name.NewTag(kclBaseImage)
+	baseRef, err := name.NewTag(b.baseImage)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to parse KCL base image tag")
 	}
@@ -185,7 +188,7 @@ func (b *kclBuilder) Build(ctx context.Context, fromFS afero.Fs, architectures [
 	eg, _ := errgroup.WithContext(ctx)
 	for i, arch := range architectures {
 		eg.Go(func() error {
-			baseImg, err := baseImageForArch(baseRef, arch)
+			baseImg, err := baseImageForArch(baseRef, arch, b.transport)
 			if err != nil {
 				return errors.Wrap(err, "failed to fetch KCL base image")
 			}
@@ -221,11 +224,16 @@ func (b *kclBuilder) Build(ctx context.Context, fromFS afero.Fs, architectures [
 	return images, eg.Wait()
 }
 
-func baseImageForArch(ref name.Reference, arch string) (v1.Image, error) {
+// baseImageForArch pulls the image with the given ref, and returns a version of
+// it suitable for use as a function base image. Specifically, the package
+// layer, examples layer, and schema layers will be removed if present. Note
+// that layers in the returned image will refer to the remote and be pulled only
+// if they are read by the caller.
+func baseImageForArch(ref name.Reference, arch string, transport http.RoundTripper) (v1.Image, error) {
 	img, err := remote.Image(ref, remote.WithPlatform(v1.Platform{
 		OS:           "linux",
 		Architecture: arch,
-	}))
+	}), remote.WithTransport(transport))
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to pull image")
 	}
@@ -294,6 +302,13 @@ func setImageEnvvar(image v1.Image, key string, value string) (v1.Image, error) 
 	}
 
 	return image, nil
+}
+
+func newKCLBuilder() *kclBuilder {
+	return &kclBuilder{
+		baseImage: "xpkg.upbound.io/awg/function-kcl-base:v0.10.0-7-g95c3036",
+		transport: http.DefaultTransport,
+	}
 }
 
 // fakeBuilder builds empty images with correct configs. It is intended for use
