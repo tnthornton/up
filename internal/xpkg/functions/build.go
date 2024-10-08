@@ -150,7 +150,7 @@ func (b *dockerBuilder) Build(ctx context.Context, fromFS afero.Fs, architecture
 				return errors.Wrap(err, "failed to parse image digest from build response")
 			}
 
-			img, err := daemon.Image(ref, daemon.WithContext(ctx))
+			img, err := daemon.Image(ref)
 			if err != nil {
 				return errors.Wrap(err, "failed to fetch built image from docker daemon")
 			}
