@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/alecthomas/kong"
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
 	"github.com/go-git/go-billy/v5/osfs"
 	"github.com/go-git/go-git/v5"
@@ -31,6 +32,7 @@ import (
 	"github.com/pterm/pterm"
 	"sigs.k8s.io/yaml"
 
+	"github.com/upbound/up/internal/upbound"
 	"github.com/upbound/up/pkg/apis/project/v1alpha1"
 )
 
@@ -44,6 +46,8 @@ type initCmd struct {
 	SshKey   string `help:"Optional. Specify an SSH key for authentication when initializing the new package. Used when method is 'ssh'."`
 	Username string `default:"git" help:"Optional. Specify a username for HTTP(S) authentication. Used when the method is 'https' and an SSH key is not provided."`
 	Password string `help:"Optional. Specify a password for authentication. Used with the username when the method is 'https', or with an SSH key that requires a password when the method is 'ssh'."`
+
+	Flags upbound.Flags `embed:""`
 }
 
 func (c *initCmd) Help() string {
@@ -85,7 +89,17 @@ func wellKnownTemplates() map[string]string {
 	}
 }
 
-func (c *initCmd) Run(ctx context.Context, p pterm.TextPrinter) error { // nolint:gocyclo
+func (c *initCmd) AfterApply(kongCtx *kong.Context) error {
+	upCtx, err := upbound.NewFromFlags(c.Flags)
+	if err != nil {
+		return err
+	}
+	upCtx.SetupLogging()
+	kongCtx.Bind(upCtx)
+	return nil
+}
+
+func (c *initCmd) Run(ctx context.Context, upCtx *upbound.Context, p pterm.TextPrinter) error { // nolint:gocyclo
 	// use name as directory
 	if c.Directory == "" {
 		c.Directory = c.Name
@@ -193,6 +207,11 @@ func (c *initCmd) Run(ctx context.Context, p pterm.TextPrinter) error { // nolin
 	}
 
 	project.ObjectMeta.Name = c.Name
+	if upCtx != nil && upCtx.Account != "" {
+		project.Spec.Repository = fmt.Sprintf("xpkg.upbound.io/%s/%s", upCtx.Account, c.Name)
+	} else {
+		project.Spec.Repository = fmt.Sprintf("xpkg.upbound.io/<YOUR ACCOUNT>/%s", c.Name)
+	}
 
 	modifiedProject, err := yaml.Marshal(&project)
 	if err != nil {
