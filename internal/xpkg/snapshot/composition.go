@@ -17,21 +17,28 @@ package snapshot
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	verrors "k8s.io/kube-openapi/pkg/validation/errors"
 	"k8s.io/kube-openapi/pkg/validation/validate"
 
+	"github.com/crossplane/crossplane-runtime/pkg/errors"
 	"github.com/crossplane/crossplane-runtime/pkg/resource"
 	xpextv1 "github.com/crossplane/crossplane/apis/apiextensions/v1"
+	"github.com/crossplane/crossplane/apis/pkg/v1beta1"
+	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/spf13/afero"
 
 	icomposite "github.com/crossplane/crossplane/controller/apiextensions/composite"
 	icompositions "github.com/crossplane/crossplane/controller/apiextensions/compositions"
 
+	"github.com/upbound/up/internal/xpkg"
 	"github.com/upbound/up/internal/xpkg/snapshot/validator"
+	projectv1alpha1 "github.com/upbound/up/pkg/apis/project/v1alpha1"
 )
 
 const (
@@ -40,6 +47,8 @@ const (
 	errFmt                  = "%s (%s)"
 	errInvalidValidationFmt = "invalid validation result returned for %s"
 	resourceBaseFmt         = "spec.resources[%d].base.%s"
+
+	pipelineStepFunctionNameFmt = "spec.pipeline[%d].functionRef.name"
 
 	errIncorrectErrType = "incorrect validaton error type seen"
 	errInvalidType      = "invalid type passed in, expected Unstructured"
@@ -97,9 +106,107 @@ func (c *CompositionValidator) Validate(ctx context.Context, data any) *validate
 		}
 	}
 
+	errs = append(errs, c.validatePipeline(ctx, comp)...)
+
 	return &validate.Result{
 		Errors: errs,
 	}
+}
+
+// validatePipeline validates a composition's pipeline.
+func (c *CompositionValidator) validatePipeline(_ context.Context, comp *xpextv1.Composition) []error {
+	var errs []error
+
+	if comp.Spec.Mode == nil || *comp.Spec.Mode != xpextv1.CompositionModePipeline {
+		// No pipeline to validate since the composition uses P&T mode.
+		return nil
+	}
+
+	errs = append(errs, c.validatePipelineFunctionRefs(comp)...)
+
+	return errs
+}
+
+// validatePipelineFunctionRefs validates that each pipeline step refers to a
+// function that is a dependency of the package.
+func (c *CompositionValidator) validatePipelineFunctionRefs(comp *xpextv1.Composition) []error {
+	var errs []error
+
+	deps, err := c.s.wsview.Meta().DependsOn()
+	if err != nil {
+		errs = append(errs, errors.Wrap(err, "failed to get dependencies"))
+		return errs
+	}
+	// Create embedded function dependencies so we know the valid embedded
+	// function names below.
+	embeddedFns, err := c.collectFunctionDeps()
+	if err != nil {
+		errs = append(errs, err)
+	}
+	deps = append(deps, embeddedFns...)
+
+	// Figure out the valid function names based on the dependencies.
+	functionDeps := make(map[string]bool)
+	for _, dep := range deps {
+		if dep.Type != v1beta1.FunctionPackageType {
+			continue
+		}
+		reg, err := name.NewRepository(dep.Package)
+		if err != nil {
+			errs = append(errs, errors.Wrapf(err, "dependency %q has invalid registry", dep.Package))
+			continue
+		}
+		repo := reg.RepositoryStr()
+		functionDeps[xpkg.ToDNSLabel(repo)] = true
+	}
+
+	// Find any pipeline steps using an unknown function.
+	for i, step := range comp.Spec.Pipeline {
+		if !functionDeps[step.FunctionRef.Name] {
+			errs = append(errs, &validator.Validation{
+				TypeCode: validator.WarningTypeCode,
+				Message:  fmt.Sprintf("package does not depend on function %q", step.FunctionRef.Name),
+				Name:     fmt.Sprintf(pipelineStepFunctionNameFmt, i),
+			})
+		}
+	}
+
+	return errs
+}
+
+func (c *CompositionValidator) collectFunctionDeps() ([]v1beta1.Dependency, error) {
+	proj, isProj := c.s.wsview.Meta().Object().(*projectv1alpha1.Project)
+	if !isProj {
+		return nil, nil
+	}
+
+	functionsDir := "functions"
+	if proj.Spec.Paths != nil && proj.Spec.Paths.Functions != "" {
+		functionsDir = proj.Spec.Paths.Functions
+	}
+	functionsPath := filepath.Join(c.s.wsview.MetaLocation(), functionsDir)
+	projRepo, err := name.NewRepository(proj.Spec.Repository)
+	if err != nil {
+		return nil, err
+	}
+
+	infos, err := afero.ReadDir(c.s.w.Filesystem(), functionsPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	deps := make([]v1beta1.Dependency, len(infos))
+	for i, info := range infos {
+		fnRepo := projRepo.Registry.Repo(projRepo.RepositoryStr() + "_" + info.Name())
+		deps[i] = v1beta1.Dependency{
+			Package: fnRepo.String(),
+			Type:    v1beta1.FunctionPackageType,
+		}
+	}
+
+	return deps, nil
 }
 
 func (c *CompositionValidator) marshal(data any) (*xpextv1.Composition, error) {

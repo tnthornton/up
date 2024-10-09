@@ -173,6 +173,11 @@ func WithPermissiveParser() Option {
 	}
 }
 
+// Filesystem returns the underlying filesystsem for the workspace.
+func (w *Workspace) Filesystem() afero.Fs {
+	return w.fs
+}
+
 // Write writes the supplied Meta details to the fs.
 func (w *Workspace) Write(m *meta.Meta) error {
 	b, err := m.Bytes()

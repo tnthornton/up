@@ -110,6 +110,11 @@ func (m *Meta) Bytes() ([]byte, error) {
 	return data, nil
 }
 
+// Object returns the raw meta object.
+func (m *Meta) Object() runtime.Object {
+	return m.obj
+}
+
 // upsertDeps takes a v1beta1.Dependency and a runtime.Object of type that can
 // be converted to a v1.Pkg and returns an updated runtime.Object with a slice
 // of dependencies that includes the provided dependency d.
