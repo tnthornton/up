@@ -37,6 +37,7 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/yaml"
 
+	"github.com/upbound/up/internal/version"
 	"github.com/upbound/up/internal/xpkg"
 	xpkgmarshaler "github.com/upbound/up/internal/xpkg/dep/marshaler/xpkg"
 	"github.com/upbound/up/internal/xpkg/functions"
@@ -56,6 +57,7 @@ func TestBuild(t *testing.T) {
 		expectedFunctions       []*xpmetav1.Function
 		expectedAnnotatedLayers map[string]bool
 		expectedObjectCount     int
+		expectedLabels          func(c *Cmd) map[string]string
 	}{
 		"ConfigurationOnly": {
 			projFS: afero.NewBasePathFs(
@@ -71,6 +73,12 @@ func TestBuild(t *testing.T) {
 				xpkg.SchemaPythonAnnotation: true,
 				xpkg.PackageAnnotation:      true,
 				xpkg.ExamplesAnnotation:     true,
+			},
+			expectedLabels: func(c *Cmd) map[string]string {
+				return map[string]string{
+					"io.upbound.up.userAgent": version.UserAgent(),
+					"io.upbound.up.buildCmd":  c.getCmdOptions(),
+				}
 			},
 		},
 		"EmbeddedFunctions": {
@@ -133,6 +141,12 @@ func TestBuild(t *testing.T) {
 				xpkg.SchemaPythonAnnotation: true,
 				xpkg.PackageAnnotation:      true,
 				xpkg.ExamplesAnnotation:     false, // no-examples expected
+			},
+			expectedLabels: func(c *Cmd) map[string]string {
+				return map[string]string{
+					"io.upbound.up.userAgent": version.UserAgent(),
+					"io.upbound.up.buildCmd":  c.getCmdOptions(),
+				}
 			},
 		},
 	}
@@ -215,6 +229,17 @@ func TestBuild(t *testing.T) {
 					}
 
 					assert.DeepEqual(t, tc.expectedAnnotatedLayers, foundLayers)
+
+					cfgFile, err := cfgImage.ConfigFile()
+					assert.NilError(t, err)
+
+					expectedLabels := tc.expectedLabels(c)
+
+					for key, expectedValue := range expectedLabels {
+						actualValue, exists := cfgFile.Config.Labels[key]
+						assert.Assert(t, exists, "Label %s not found", key)
+						assert.Equal(t, expectedValue, actualValue, "Label %s value mismatch", key)
+					}
 
 				} else {
 					fnTag, err := name.NewTag(desc.RepoTags[0])

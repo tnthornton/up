@@ -20,6 +20,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 
@@ -30,6 +31,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/cache"
+	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
 	"github.com/pterm/pterm"
 	"github.com/spf13/afero"
@@ -38,6 +40,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/upbound/up/internal/upterm"
+	"github.com/upbound/up/internal/version"
 	"github.com/upbound/up/internal/xpkg"
 	"github.com/upbound/up/internal/xpkg/functions"
 	"github.com/upbound/up/internal/xpkg/mutators"
@@ -237,6 +240,11 @@ func (c *Cmd) Run(ctx context.Context, p pterm.TextPrinter) error { //nolint:goc
 		return err
 	}
 
+	img, err = c.addLabels(img)
+	if err != nil {
+		return errors.Wrapf(err, "failed add labels to package")
+	}
+
 	// Write out the packages to a file, which can be consumed by up project
 	// push.
 	imgTag, err := name.NewTag(fmt.Sprintf("%s:%s", project.Spec.Repository, ConfigurationTag))
@@ -412,7 +420,7 @@ func (c *Cmd) buildFunctions(ctx context.Context, fromFS afero.Fs, project *v1al
 	return imgMap, deps, nil
 }
 
-// buildFunction builds iamges for a single function whose source resides in the
+// buildFunction builds images for a single function whose source resides in the
 // given filesystem. One image will be returned for each architecture specified
 // in the project.
 func (c *Cmd) buildFunction(ctx context.Context, fromFS afero.Fs, project *v1alpha1.Project, fnName string) ([]v1.Image, error) {
@@ -568,4 +576,49 @@ func fnMetaFromProject(proj *v1alpha1.Project, fnName string) metav1.ObjectMeta 
 	meta.Annotations["meta.crossplane.io/description"] = fmt.Sprintf("Function %s from project %s", fnName, proj.Name)
 
 	return *meta
+}
+
+// addLabels adds labels to a v1.Image
+func (c *Cmd) addLabels(img v1.Image) (v1.Image, error) {
+	cfgFile, err := img.ConfigFile()
+	if err != nil {
+		return nil, errors.Wrap(err, "error getting config file")
+	}
+
+	if cfgFile.Config.Labels == nil {
+		cfgFile.Config.Labels = make(map[string]string)
+	}
+
+	cfgFile.Config.Labels["io.upbound.up.userAgent"] = version.UserAgent()
+	cfgFile.Config.Labels["io.upbound.up.buildCmd"] = c.getCmdOptions()
+
+	// Mutate the image to include the updated configuration with labels
+	updatedImg, err := mutate.ConfigFile(img, cfgFile)
+	if err != nil {
+		return nil, errors.Wrap(err, "error updating config file with labels")
+	}
+
+	return updatedImg, nil
+}
+
+// getCmdOptions generates a string of all command-line options from the Cmd struct
+func (c Cmd) getCmdOptions() string {
+	v := reflect.ValueOf(c)
+	typeOfCmd := v.Type()
+
+	var options string
+
+	for i := 0; i < v.NumField(); i++ {
+		field := typeOfCmd.Field(i)
+		value := v.Field(i)
+		if !value.CanInterface() {
+			continue
+		}
+		if options != "" {
+			options += ", "
+		}
+		options += fmt.Sprintf("%s: %v", field.Name, value.Interface())
+	}
+
+	return options
 }
