@@ -541,12 +541,12 @@ func validationDiagnostics(res *validate.Result, n ast.Node, gvk schema.GroupVer
 				diags = append(diags, protocol.Diagnostic{
 					Range: protocol.Range{
 						Start: protocol.Position{
-							Line:      uint32(tok.Position.Line - 1),
-							Character: uint32(startCh),
+							Line:      uint32(tok.Position.Line - 1), //nolint:gosec
+							Character: uint32(startCh),               //nolint:gosec
 						},
 						End: protocol.Position{
-							Line:      uint32(tok.Position.Line - 1),
-							Character: uint32(endCh),
+							Line:      uint32(tok.Position.Line - 1), //nolint:gosec
+							Character: uint32(endCh),                 //nolint:gosec
 						},
 					},
 					Message:  e.Error(),

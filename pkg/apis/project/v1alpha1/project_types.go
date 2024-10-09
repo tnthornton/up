@@ -17,7 +17,6 @@ package v1alpha1
 import (
 	pkgmetav1 "github.com/crossplane/crossplane/apis/pkg/meta/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 // Project defines an Upbound Project, which can be built into a Crossplane
@@ -68,21 +67,4 @@ type ProjectPaths struct {
 	// Examples is the directory holding the project's examples. If not
 	// specified, it defaults to `examples/`.
 	Examples string `json:"examples,omitempty"`
-}
-
-const (
-	// Group is the API Group for projects.
-	Group = "meta.dev.upbound.io"
-	// Version is the API version for projects.
-	Version = "v1alpha1"
-	// GroupVersion is the GroupVersion for projects.
-	GroupVersion = Group + "/" + Version
-	// ProjectKind is the kind of a Project.
-	ProjectKind = "Project"
-)
-
-var ProjectGroupVersionKind = schema.GroupVersionKind{
-	Group:   Group,
-	Version: Version,
-	Kind:    ProjectKind,
 }
