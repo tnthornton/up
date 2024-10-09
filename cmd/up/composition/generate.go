@@ -21,18 +21,24 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/alecthomas/kong"
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
 	v1 "github.com/crossplane/crossplane/apis/apiextensions/v1"
 	"github.com/crossplane/crossplane/apis/pkg/v1beta1"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/pterm/pterm"
+	"github.com/spf13/afero"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	xcrd "github.com/upbound/up/internal/crd"
 	"github.com/upbound/up/internal/xpkg"
+	"github.com/upbound/up/internal/xpkg/dep"
+	"github.com/upbound/up/internal/xpkg/dep/cache"
 	"github.com/upbound/up/internal/xpkg/dep/manager"
 	mxpkg "github.com/upbound/up/internal/xpkg/dep/marshaler/xpkg"
+	"github.com/upbound/up/internal/xpkg/dep/resolver/image"
+	"github.com/upbound/up/internal/xpkg/workspace"
 	projectv1alpha1 "github.com/upbound/up/pkg/apis/project/v1alpha1"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -48,11 +54,87 @@ const (
 	functionAutoReadyXpkg = "xpkg.upbound.io/crossplane-contrib/function-auto-ready"
 )
 
+var kclTemplate = `{
+    "apiVersion": "template.fn.crossplane.io/v1beta1",
+    "kind": "KCLInput",
+    "spec": {
+        "source": ""
+    }
+}`
+
+var goTemplate = `{
+    "apiVersion": "gotemplating.fn.crossplane.io/v1beta1",
+    "kind": "GoTemplate",
+    "source": "Inline",
+    "inline": {
+        "template": ""
+    }
+}`
+
+var patTemplate = `{
+    "apiVersion": "pt.fn.crossplane.io/v1beta1",
+    "kind": "Resources",
+    "resources": []
+}`
+
 type generateCmd struct {
 	XRD         string `arg:"" help:"File path to the Crossplane Resource Definition (XRD) YAML file."`
 	Path        string `help:"Optional path to the output file where the generated Composition will be saved." optional:""`
 	ProjectFile string `short:"f" help:"Path to project definition file." default:"upbound.yaml"`
 	Output      string `help:"Output format for the results: 'file' to save to a file, 'yaml' to print XRD in YAML format, 'json' to print XRD in JSON format." short:"o" default:"file" enum:"file,yaml,json"`
+	CacheDir    string `short:"d" help:"Directory used for caching dependency images." default:"~/.up/cache/" env:"CACHE_DIR" type:"path"`
+
+	m  *manager.Manager
+	ws *workspace.Workspace
+}
+
+// AfterApply constructs and binds Upbound-specific context to any subcommands
+// that have Run() methods that receive it.
+func (c *generateCmd) AfterApply(kongCtx *kong.Context, p pterm.TextPrinter) error {
+	kongCtx.Bind(pterm.DefaultBulletList.WithWriter(kongCtx.Stdout))
+	ctx := context.Background()
+	fs := afero.NewOsFs()
+
+	cache, err := cache.NewLocal(c.CacheDir, cache.WithFS(fs))
+	if err != nil {
+		return err
+	}
+
+	r := image.NewResolver()
+
+	m, err := manager.New(
+		manager.WithCache(cache),
+		manager.WithResolver(r),
+	)
+
+	if err != nil {
+		return err
+	}
+
+	c.m = m
+
+	wd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+
+	ws, err := workspace.New(wd,
+		workspace.WithFS(fs),
+		workspace.WithPrinter(p),
+		workspace.WithPermissiveParser(),
+	)
+	if err != nil {
+		return err
+	}
+	c.ws = ws
+
+	if err := ws.Parse(ctx); err != nil {
+		return err
+	}
+
+	// workaround interfaces not being bindable ref: https://github.com/alecthomas/kong/issues/48
+	kongCtx.BindTo(ctx, (*context.Context)(nil))
+	return nil
 }
 
 func (c *generateCmd) Run(ctx context.Context, p pterm.TextPrinter) error { // nolint:gocyclo
@@ -178,10 +260,7 @@ func (c *generateCmd) createPipelineFromProject(ctx context.Context, project pro
 	foundAutoReadyFunction := false
 
 	var deps []*mxpkg.ParsedPackage
-	m, err := manager.New()
-	if err != nil {
-		return nil, errors.Wrap(err, "failed initializing manager")
-	}
+	var err error
 
 	for _, dep := range project.Spec.DependsOn {
 		if dep.Function != nil {
@@ -202,10 +281,10 @@ func (c *generateCmd) createPipelineFromProject(ctx context.Context, project pro
 			}
 
 			// Try to resolve the function
-			_, deps, err = m.Resolve(ctx, convertedDep)
+			_, deps, err = c.m.Resolve(ctx, convertedDep)
 			if err != nil {
 				// If resolving fails, try to add function
-				_, deps, err = m.AddAll(ctx, convertedDep)
+				_, deps, err = c.m.AddAll(ctx, convertedDep)
 				if err != nil {
 					return nil, errors.Wrapf(err, "failed to add dependencies in %s", functionName)
 				}
@@ -214,15 +293,28 @@ func (c *generateCmd) createPipelineFromProject(ctx context.Context, project pro
 	}
 
 	if !foundAutoReadyFunction {
-		autoReadyDep := v1beta1.Dependency{}
-		autoReadyDep.Package = functionAutoReadyXpkg
-		autoReadyDep.Type = "Function"
+		d := dep.New(functionAutoReadyXpkg)
 
-		_, deps, err = m.AddAll(ctx, autoReadyDep)
-
+		var ud v1beta1.Dependency
+		ud, deps, err = c.m.AddAll(ctx, d)
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed to add auto-ready dependency")
 		}
+
+		meta := c.ws.View().Meta()
+		if meta != nil {
+			if d.Constraints != "" {
+				ud.Constraints = d.Constraints
+			}
+			if err := meta.Upsert(ud); err != nil {
+				return nil, errors.Wrapf(err, "failed to add auto-ready dependency")
+			}
+
+			if err := c.ws.Write(meta); err != nil {
+				return nil, errors.Wrapf(err, "failed to write auto-ready dependency to project")
+			}
+		}
+
 	}
 
 	for _, dep := range deps {
@@ -303,32 +395,14 @@ func (c *generateCmd) setRawExtension(crd apiextensionsv1.CustomResourceDefiniti
 
 	// match GVK and inputType to create the appropriate raw extension content
 	switch gvk {
-
 	case "template.fn.crossplane.io/v1beta1/KCLInput":
-		rawExtensionContent = `{
-	            "apiVersion": "template.fn.crossplane.io/v1beta1",
-	            "kind": "KCLInput",
-	            "spec": {
-	                "source": ""
-	            }
-	        }`
+		rawExtensionContent = kclTemplate
 
 	case "gotemplating.fn.crossplane.io/v1beta1/GoTemplate":
-		rawExtensionContent = `{
-	            "apiVersion": "gotemplating.fn.crossplane.io/v1beta1",
-	            "kind": "GoTemplate",
-	            "source": "Inline",
-				"inline": {
-				    "template": ""
-				}
-	        }`
+		rawExtensionContent = goTemplate
 
 	case "pt.fn.crossplane.io/v1beta1/Resources":
-		rawExtensionContent = `{
-	            "apiVersion": "pt.fn.crossplane.io/v1beta1",
-	            "kind": "Resources",
-	            "resources": []
-	        }`
+		rawExtensionContent = patTemplate
 	default:
 		// nothing matches so we generate the default required fields
 		// only required fields from function crd
