@@ -44,8 +44,8 @@ const (
 
 	errAPIVersionDeprecatedFmt = "%s is deprecated in favor of %s"
 	errFailedConvertToPkg      = "unable to convert to package"
-	errPackageDNEFmt           = "Package %s does not exist locally. Please run `up xpkg dep` to fix."
-	errVersionDENFmt           = "Version matching %s does not exist locally. Please run `up xpkg dep` to fix."
+	errPackageDNEFmt           = "Package %s does not exist locally. Please run `up dep update-cache` to fix."
+	errVersionDENFmt           = "Version matching %s does not exist locally. Please run `up dep update-cache` to fix."
 	errWrongPkgTypeFmt         = "Incorrect package type. '%s' does not match type for %s of '%s'"
 )
 

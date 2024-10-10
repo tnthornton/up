@@ -36,6 +36,7 @@ import (
 	"github.com/crossplane/crossplane/xcrd"
 
 	"github.com/upbound/up/internal/xpkg/snapshot/validator"
+	projectv1alpha1 "github.com/upbound/up/pkg/apis/project/v1alpha1"
 )
 
 const (
@@ -84,6 +85,10 @@ func ValidatorsForObj(ctx context.Context, o runtime.Object, s *Snapshot) (map[s
 		}
 	case *metav1alpha1.Provider:
 		if err := s.validatorsForV1Alpha1Provider(rd, validators); err != nil {
+			return nil, err
+		}
+	case *projectv1alpha1.Project:
+		if err := s.validatorsForV1Alpha1Project(rd, validators); err != nil {
 			return nil, err
 		}
 	default:
@@ -215,6 +220,15 @@ func (s *Snapshot) validatorsForV1Provider(c *metav1.Provider, acc map[schema.Gr
 }
 
 func (s *Snapshot) validatorsForV1Alpha1Provider(c *metav1alpha1.Provider, acc map[schema.GroupVersionKind]*validator.ObjectValidator) error {
+	v, err := DefaultMetaValidators(s)
+	if err != nil {
+		return err
+	}
+	appendToValidators(c.GroupVersionKind(), acc, v)
+	return nil
+}
+
+func (s *Snapshot) validatorsForV1Alpha1Project(c *projectv1alpha1.Project, acc map[schema.GroupVersionKind]*validator.ObjectValidator) error {
 	v, err := DefaultMetaValidators(s)
 	if err != nil {
 		return err

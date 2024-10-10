@@ -25,19 +25,24 @@ import (
 	pkgmetav1 "github.com/crossplane/crossplane/apis/pkg/meta/v1"
 	pkgmetav1alpha1 "github.com/crossplane/crossplane/apis/pkg/meta/v1alpha1"
 	pkgmetav1beta1 "github.com/crossplane/crossplane/apis/pkg/meta/v1beta1"
+
+	projectv1alpha1 "github.com/upbound/up/pkg/apis/project/v1alpha1"
 )
 
 // BuildMetaScheme builds the default scheme used for identifying metadata in a
 // Crossplane package.
 func BuildMetaScheme() (*runtime.Scheme, error) {
 	metaScheme := runtime.NewScheme()
-	if err := pkgmetav1alpha1.SchemeBuilder.AddToScheme(metaScheme); err != nil {
+	if err := pkgmetav1alpha1.AddToScheme(metaScheme); err != nil {
 		return nil, err
 	}
-	if err := pkgmetav1beta1.SchemeBuilder.AddToScheme(metaScheme); err != nil {
+	if err := pkgmetav1beta1.AddToScheme(metaScheme); err != nil {
 		return nil, err
 	}
-	if err := pkgmetav1.SchemeBuilder.AddToScheme(metaScheme); err != nil {
+	if err := pkgmetav1.AddToScheme(metaScheme); err != nil {
+		return nil, err
+	}
+	if err := projectv1alpha1.AddToScheme(metaScheme); err != nil {
 		return nil, err
 	}
 	return metaScheme, nil
