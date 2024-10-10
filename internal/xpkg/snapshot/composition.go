@@ -20,7 +20,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
+	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	verrors "k8s.io/kube-openapi/pkg/validation/errors"
@@ -37,6 +39,7 @@ import (
 	icompositions "github.com/crossplane/crossplane/controller/apiextensions/compositions"
 
 	"github.com/upbound/up/internal/xpkg"
+	mxpkg "github.com/upbound/up/internal/xpkg/dep/marshaler/xpkg"
 	"github.com/upbound/up/internal/xpkg/snapshot/validator"
 	projectv1alpha1 "github.com/upbound/up/pkg/apis/project/v1alpha1"
 )
@@ -49,6 +52,8 @@ const (
 	resourceBaseFmt         = "spec.resources[%d].base.%s"
 
 	pipelineStepFunctionNameFmt = "spec.pipeline[%d].functionRef.name"
+	pipelineStepInputFmt        = "spec.pipeline[%d].input"
+	pipelineStepInputFieldFmt   = "spec.pipeline[%d].input.%s"
 
 	errIncorrectErrType = "incorrect validaton error type seen"
 	errInvalidType      = "invalid type passed in, expected Unstructured"
@@ -114,7 +119,7 @@ func (c *CompositionValidator) Validate(ctx context.Context, data any) *validate
 }
 
 // validatePipeline validates a composition's pipeline.
-func (c *CompositionValidator) validatePipeline(_ context.Context, comp *xpextv1.Composition) []error {
+func (c *CompositionValidator) validatePipeline(ctx context.Context, comp *xpextv1.Composition) []error {
 	var errs []error
 
 	if comp.Spec.Mode == nil || *comp.Spec.Mode != xpextv1.CompositionModePipeline {
@@ -123,6 +128,7 @@ func (c *CompositionValidator) validatePipeline(_ context.Context, comp *xpextv1
 	}
 
 	errs = append(errs, c.validatePipelineFunctionRefs(comp)...)
+	errs = append(errs, c.validatePipelineFunctionInputs(ctx, comp)...)
 
 	return errs
 }
@@ -207,6 +213,131 @@ func (c *CompositionValidator) collectFunctionDeps() ([]v1beta1.Dependency, erro
 	}
 
 	return deps, nil
+}
+
+// validatePipelineFunctionInputs validates that each pipeline step's input is
+// of the correct type for the function it uses.
+func (c *CompositionValidator) validatePipelineFunctionInputs(ctx context.Context, comp *xpextv1.Composition) []error { //nolint:gocyclo
+	var errs []error
+
+	for stepIdx, step := range comp.Spec.Pipeline {
+		if step.Input == nil {
+			continue
+		}
+
+		crds, found := c.inputCRDsForFunction(step.FunctionRef.Name)
+		if !found {
+			continue
+		}
+		if len(crds) == 0 {
+			errs = append(errs, &validator.Validation{
+				TypeCode: validator.WarningTypeCode,
+				Message:  fmt.Sprintf("function %q does not take input", step.FunctionRef.Name),
+				Name:     fmt.Sprintf(pipelineStepInputFmt, stepIdx),
+			})
+			continue
+		}
+
+		vals := make(map[schema.GroupVersionKind]*validator.ObjectValidator)
+		for _, crd := range crds {
+			_ = validatorsFromV1CRD(crd, vals)
+		}
+		crdKinds := make([]string, 0, len(vals))
+		for kind := range vals {
+			crdKinds = append(crdKinds, kind.String())
+		}
+
+		var u unstructured.Unstructured
+		err := json.Unmarshal(step.Input.Raw, &u)
+		if err != nil {
+			errs = append(errs, &validator.Validation{
+				TypeCode: validator.WarningTypeCode,
+				Message:  err.Error(),
+				Name:     fmt.Sprintf(pipelineStepInputFmt, stepIdx),
+			})
+			continue
+		}
+		val, ok := vals[u.GroupVersionKind()]
+		if !ok {
+			errs = append(errs, &validator.Validation{
+				TypeCode: validator.WarningTypeCode,
+				Message:  fmt.Sprintf("incorrect input type for step %q; valid inputs: %v", step.Step, crdKinds),
+				Name:     fmt.Sprintf(pipelineStepInputFieldFmt, stepIdx, "apiVersion"),
+			})
+			continue
+		}
+		res := val.Validate(ctx, &u)
+		for _, e := range append(res.Errors, res.Warnings...) {
+			var ve *verrors.Validation
+			if !errors.As(e, &ve) {
+				return []error{errors.New(errIncorrectErrType)}
+			}
+			ie := &validator.Validation{
+				TypeCode: ve.Code(),
+				Message:  fmt.Sprintf(errFmt, ve.Error(), u.GroupVersionKind()),
+				Name:     fmt.Sprintf(pipelineStepInputFieldFmt, stepIdx, ve.Name),
+			}
+			errs = append(errs, ie)
+		}
+	}
+
+	return errs
+}
+
+// inputCRDsForFunction returns all the CRDs included in the package for the
+// function with the given name. Note that the name here is not the name of the
+// function package, but the name constructed by the package manager when the
+// function is installed as a dependency.
+func (c *CompositionValidator) inputCRDsForFunction(name string) ([]*apiextv1.CustomResourceDefinition, bool) {
+	possibleRepos := possibleReposForFunction(name)
+
+	var pkg *mxpkg.ParsedPackage
+	for _, repo := range possibleRepos {
+		got := c.s.Package(repo)
+		if got == nil || got.Type() != v1beta1.FunctionPackageType {
+			continue
+		}
+		pkg = got
+		break
+	}
+	if pkg == nil {
+		// Didn't find a function for this step. Either we didn't guess the name
+		// properly, or the name is wrong. In the latter case, a warning will be
+		// raised elsewhere.
+		return nil, false
+	}
+
+	crds := make([]*apiextv1.CustomResourceDefinition, 0, len(pkg.Objs))
+	for _, obj := range pkg.Objs {
+		crd, ok := obj.(*apiextv1.CustomResourceDefinition)
+		if !ok {
+			continue
+		}
+		crds = append(crds, crd)
+	}
+
+	return crds, true
+}
+
+// possibleReposForFunction returns the possible repository paths for a function
+// that the package manager would give a particular name. The package manager
+// constructs these names by replacing `/` characters with `-` and stripping
+// other non-DNS-friendly characters. This construction can't be reversed
+// deterministically (since `my-org/cool-function` would get the same name as
+// `my/org-cool-function`), hence why we have a set of possible candidates
+// rather than just one name.
+//
+// Note that since embedded function repositories have a _ in their path, which
+// gets stripped by the package manager, they'll never be matched properly here.
+func possibleReposForFunction(name string) []string {
+	sp := strings.Split(name, "-")
+	possibles := make([]string, len(sp)-1)
+	for i := 1; i < len(sp); i++ {
+		acct := strings.Join(sp[:i], "-")
+		repo := strings.Join(sp[i:], "-")
+		possibles[i-1] = fmt.Sprintf("xpkg.upbound.io/%s/%s", acct, repo)
+	}
+	return possibles
 }
 
 func (c *CompositionValidator) marshal(data any) (*xpextv1.Composition, error) {
