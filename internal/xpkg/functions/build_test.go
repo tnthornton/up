@@ -40,6 +40,11 @@ import (
 	"github.com/upbound/up/internal/xpkg"
 )
 
+var (
+	_ Builder = &kclBuilder{}
+	_ Builder = &pythonBuilder{}
+)
+
 func TestIdentify(t *testing.T) {
 	t.Parallel()
 
@@ -59,6 +64,12 @@ func TestIdentify(t *testing.T) {
 				"kcl.mod": "[package]",
 			},
 			expectedBuilder: &kclBuilder{},
+		},
+		"PythonOnly": {
+			files: map[string]string{
+				"main.py": "",
+			},
+			expectedBuilder: &pythonBuilder{},
 		},
 		"DockerfileAndKCL": {
 			files: map[string]string{
@@ -162,6 +173,86 @@ func TestKCLBuild(t *testing.T) {
 		assert.NilError(t, err)
 
 		tpath := filepath.Join("/src", path)
+		st, err := tfs.Stat(tpath)
+		assert.NilError(t, err)
+
+		if st.IsDir() {
+			return nil
+		}
+		wantContents, err := afero.ReadFile(fromFS, path)
+		assert.NilError(t, err)
+		gotContents, err := afero.ReadFile(tfs, tpath)
+		assert.NilError(t, err)
+		assert.DeepEqual(t, wantContents, gotContents)
+
+		return nil
+	})
+	assert.NilError(t, err)
+}
+
+//go:embed testdata/python-function/**
+var pythonFunction embed.FS
+
+func TestPythonBuild(t *testing.T) {
+	t.Parallel()
+
+	// Start a test registry to serve the base image.
+	regSrv, err := registry.TLS("localhost")
+	assert.NilError(t, err)
+	t.Cleanup(regSrv.Close)
+	testRegistry, err := name.NewRegistry(strings.TrimPrefix(regSrv.URL, "https://"))
+	assert.NilError(t, err)
+
+	// Put an base image in the registry that contains only a package layer. The
+	// package layer should be removed when we build a function on top of it.
+	// TODO(negz): This isn't really needed for Python.
+	baseImageRef := testRegistry.Repo("unittest-base-image").Tag("latest")
+	baseImage, err := mutate.ConfigFile(empty.Image, &v1.ConfigFile{
+		Architecture: "amd64",
+	})
+	assert.NilError(t, err)
+	baseLayer, err := random.Layer(1, types.OCILayer)
+	assert.NilError(t, err)
+	baseImage, err = mutate.Append(baseImage, mutate.Addendum{
+		Layer: baseLayer,
+		Annotations: map[string]string{
+			xpkg.AnnotationKey: xpkg.PackageAnnotation,
+		},
+	})
+	assert.NilError(t, err)
+	err = remote.Put(baseImageRef, baseImage, remote.WithTransport(regSrv.Client().Transport))
+	assert.NilError(t, err)
+
+	// Build a python function on top of the base image.
+	b := &pythonBuilder{
+		baseImage:   baseImageRef.String(),
+		packagePath: "/venv/fn/lib/python3.11/site-packages/function",
+		transport:   regSrv.Client().Transport,
+	}
+	fromFS := afero.NewBasePathFs(
+		afero.FromIOFS{FS: pythonFunction},
+		"testdata/python-function",
+	)
+	fnImgs, err := b.Build(context.Background(), fromFS, []string{"amd64"})
+	assert.NilError(t, err)
+	assert.Assert(t, cmp.Len(fnImgs, 1))
+	fnImg := fnImgs[0]
+
+	// Verify that the code layer was added.
+	layers, err := fnImg.Layers()
+	assert.NilError(t, err)
+	assert.Assert(t, cmp.Len(layers, 1))
+	layer := layers[0]
+	rc, err := layer.Uncompressed()
+	assert.NilError(t, err)
+
+	// Make sure all the files got added with the correct contents.
+	tr := tar.NewReader(rc)
+	tfs := tarfs.New(tr)
+	_ = afero.Walk(fromFS, "/", func(path string, info fs.FileInfo, err error) error {
+		assert.NilError(t, err)
+
+		tpath := filepath.Join("/venv/fn/lib/python3.11/site-packages/function", path)
 		st, err := tfs.Stat(tpath)
 		assert.NilError(t, err)
 

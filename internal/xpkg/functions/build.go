@@ -64,6 +64,7 @@ func (realIdentifier) Identify(fromFS afero.Fs) (Builder, error) {
 	builders := []Builder{
 		&dockerBuilder{},
 		newKCLBuilder(),
+		newPythonBuilder(),
 	}
 	for _, b := range builders {
 		ok, err := b.match(fromFS)
@@ -224,6 +225,65 @@ func (b *kclBuilder) Build(ctx context.Context, fromFS afero.Fs, architectures [
 	return images, eg.Wait()
 }
 
+// pythonBuilder builds functions written in python by injecting their code into a
+// function-python base image.
+type pythonBuilder struct {
+	baseImage   string
+	packagePath string
+	transport   http.RoundTripper
+}
+
+func (b *pythonBuilder) Name() string {
+	return "python"
+}
+
+func (b *pythonBuilder) match(fromFS afero.Fs) (bool, error) {
+	// More reliable than requirements.txt, which is optional.
+	return afero.Exists(fromFS, "main.py")
+}
+
+func (b *pythonBuilder) Build(ctx context.Context, fromFS afero.Fs, architectures []string) ([]v1.Image, error) {
+	baseRef, err := name.NewTag(b.baseImage)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to parse python base image tag")
+	}
+
+	images := make([]v1.Image, len(architectures))
+	eg, _ := errgroup.WithContext(ctx)
+	for i, arch := range architectures {
+		eg.Go(func() error {
+			// TODO(negz): The function-interpreter-python base image doesn't
+			// have a package, examples, or schema layer. Is this needed?
+			baseImg, err := baseImageForArch(baseRef, arch, b.transport)
+			if err != nil {
+				return errors.Wrap(err, "failed to fetch python base image")
+			}
+
+			src, err := filesystem.FSToTar(fromFS, b.packagePath)
+			if err != nil {
+				return errors.Wrap(err, "failed to tar layer contents")
+			}
+
+			codeLayer, err := tarball.LayerFromOpener(func() (io.ReadCloser, error) {
+				return io.NopCloser(bytes.NewReader(src)), nil
+			})
+			if err != nil {
+				return errors.Wrap(err, "failed to create code layer")
+			}
+
+			img, err := mutate.AppendLayers(baseImg, codeLayer)
+			if err != nil {
+				return errors.Wrap(err, "failed to add code to image")
+			}
+
+			images[i] = img
+			return nil
+		})
+	}
+
+	return images, eg.Wait()
+}
+
 // baseImageForArch pulls the image with the given ref, and returns a version of
 // it suitable for use as a function base image. Specifically, the package
 // layer, examples layer, and schema layers will be removed if present. Note
@@ -308,6 +368,17 @@ func newKCLBuilder() *kclBuilder {
 	return &kclBuilder{
 		baseImage: "xpkg.upbound.io/awg/function-kcl-base:v0.10.6-1-gf9733e3",
 		transport: http.DefaultTransport,
+	}
+}
+
+func newPythonBuilder() *pythonBuilder {
+	return &pythonBuilder{
+		// TODO(negz): Should this be hardcoded?
+		baseImage: "xpkg.upbound.io/upbound/function-interpreter-python:v0.1.0",
+
+		// TODO(negz): This'll need to change if function-interpreter-python is
+		// updated to a distroless base layer that uses a newer Python version.
+		packagePath: "/venv/fn/lib/python3.11/site-packages/function",
 	}
 }
 
