@@ -733,6 +733,163 @@ spec:
 				err: errors.New("invalid manifest: apiVersion must be in the format group/version"),
 			},
 		},
+		"RemoveXPStandardFieldsFromSpec": {
+			inputYAML: `
+apiVersion: aws.u5d.io/v1
+kind: XEKS
+metadata:
+  name: test
+spec:
+  parameters:
+    id: test
+    region: eu-central-1
+  resourceRefs:
+    - name: resource1
+  writeConnectionSecretToRef:
+    name: secret
+  publishConnectionDetailsTo:
+    name: details
+  environmentConfigRefs:
+    - name: config1
+  compositionSelector:
+    matchLabels:
+      layer: functions
+`,
+			customPlural: "xeks",
+			want: want{
+				xrd: &v1.CompositeResourceDefinition{
+					TypeMeta: metav1.TypeMeta{
+						APIVersion: "apiextensions.crossplane.io/v1",
+						Kind:       "CompositeResourceDefinition",
+					},
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "xeks.aws.u5d.io",
+					},
+					Spec: v1.CompositeResourceDefinitionSpec{
+						Group: "aws.u5d.io",
+						Names: extv1.CustomResourceDefinitionNames{
+							Categories: []string{"crossplane"},
+							Kind:       "XEKS",
+							Plural:     "xeks",
+						},
+						Versions: []v1.CompositeResourceDefinitionVersion{
+							{
+								Name:          "v1",
+								Referenceable: true,
+								Served:        true,
+								Schema: &v1.CompositeResourceValidation{
+									OpenAPIV3Schema: jsonSchemaPropsToRawExtension(&extv1.JSONSchemaProps{
+										Description: "XEKS is the Schema for the XEKS API.",
+										Type:        "object",
+										Properties: map[string]extv1.JSONSchemaProps{
+											"spec": {
+												Description: "XEKSSpec defines the desired state of XEKS.",
+												Type:        "object",
+												Properties: map[string]extv1.JSONSchemaProps{
+													"parameters": {
+														Type: "object",
+														Properties: map[string]extv1.JSONSchemaProps{
+															"id": {
+																Type: "string",
+															},
+															"region": {
+																Type: "string",
+															},
+														},
+													},
+												},
+											},
+											"status": {
+												Description: "XEKSStatus defines the observed state of XEKS.",
+												Type:        "object",
+											},
+										},
+										Required: []string{"spec"},
+									}),
+								},
+							},
+						},
+					},
+				},
+				err: nil,
+			},
+		},
+		"RemoveOtherXPStandardFieldsFromSpec": {
+			inputYAML: `
+apiVersion: aws.u5d.io/v1
+kind: XEKS
+metadata:
+  name: test
+spec:
+  parameters:
+    id: test
+    region: eu-central-1
+  compositionRef:
+    name: test-composition
+  compositionRevisionRef:
+    name: test-revision
+  claimRef:
+    name: test-claim
+`,
+			customPlural: "xeks",
+			want: want{
+				xrd: &v1.CompositeResourceDefinition{
+					TypeMeta: metav1.TypeMeta{
+						APIVersion: "apiextensions.crossplane.io/v1",
+						Kind:       "CompositeResourceDefinition",
+					},
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "xeks.aws.u5d.io",
+					},
+					Spec: v1.CompositeResourceDefinitionSpec{
+						Group: "aws.u5d.io",
+						Names: extv1.CustomResourceDefinitionNames{
+							Categories: []string{"crossplane"},
+							Kind:       "XEKS",
+							Plural:     "xeks",
+						},
+						Versions: []v1.CompositeResourceDefinitionVersion{
+							{
+								Name:          "v1",
+								Referenceable: true,
+								Served:        true,
+								Schema: &v1.CompositeResourceValidation{
+									OpenAPIV3Schema: jsonSchemaPropsToRawExtension(&extv1.JSONSchemaProps{
+										Description: "XEKS is the Schema for the XEKS API.",
+										Type:        "object",
+										Properties: map[string]extv1.JSONSchemaProps{
+											"spec": {
+												Description: "XEKSSpec defines the desired state of XEKS.",
+												Type:        "object",
+												Properties: map[string]extv1.JSONSchemaProps{
+													"parameters": {
+														Type: "object",
+														Properties: map[string]extv1.JSONSchemaProps{
+															"id": {
+																Type: "string",
+															},
+															"region": {
+																Type: "string",
+															},
+														},
+													},
+												},
+											},
+											"status": {
+												Description: "XEKSStatus defines the observed state of XEKS.",
+												Type:        "object",
+											},
+										},
+										Required: []string{"spec"},
+									}),
+								},
+							},
+						},
+					},
+				},
+				err: nil,
+			},
+		},
 	}
 
 	for name, tc := range cases {

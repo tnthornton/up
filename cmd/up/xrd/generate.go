@@ -160,6 +160,25 @@ func newXRD(yamlData []byte, customPlural string) (*v1.CompositeResourceDefiniti
 		return nil, errors.New("invalid manifest: spec is required")
 	}
 
+	// List of standard Crossplane fields to remove from the XR/XRC.
+	// These fields are automatically populated by Crossplane when the CRD is created in the cluster.
+	fieldsToRemove := []string{
+		"resourceRefs",
+		"writeConnectionSecretToRef",
+		"publishConnectionDetailsTo",
+		"environmentConfigRefs",
+		"compositionUpdatePolicy",
+		"compositionRevisionRef",
+		"compositionRevisionSelector",
+		"compositionRef",
+		"compositionSelector",
+		"claimRef",
+	}
+
+	for _, field := range fieldsToRemove {
+		delete(input.Spec, field)
+	}
+
 	gv, err := schema.ParseGroupVersion(input.APIVersion)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to parse API version")
