@@ -21,12 +21,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"k8s.io/apimachinery/pkg/runtime/schema"
-
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/spf13/afero"
 	"github.com/spf13/afero/tarfs"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 
 	xpmetav1 "github.com/crossplane/crossplane/apis/pkg/meta/v1"
@@ -55,7 +54,7 @@ const (
 )
 
 var (
-	crdGVK = schema.GroupVersionKind{Group: "apiextensions.k8s.io", Version: "v1", Kind: "CustomResourceDefinition"}
+	crdGVK = apiextensionsv1.SchemeGroupVersion.WithKind("CustomResourceDefinition")
 )
 
 // Marshaler represents a xpkg Marshaler

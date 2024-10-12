@@ -17,7 +17,7 @@ package crd
 import "testing"
 
 func TestIsKnownAPIVersion(t *testing.T) {
-	knownAPIVersions = []string{"v1", "v1alpha1", "v1beta1"}
+	KnownAPIVersions = []string{"v1", "v1alpha1", "v1beta1"}
 
 	tests := []struct {
 		name     string

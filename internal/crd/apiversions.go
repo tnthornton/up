@@ -14,8 +14,8 @@
 
 package crd
 
-// KCL limitation - we use knownAPIVersions for all our schema generation processes.
-var knownAPIVersions = []string{
+// KCL limitation - we use KnownAPIVersions for all our schema generation processes.
+var KnownAPIVersions = []string{
 	"v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9", "v10",
 	"v1alpha1", "v1alpha2", "v1alpha3", "v1alpha4", "v1alpha5",
 	"v2alpha1", "v2alpha2", "v2alpha3", "v2alpha4", "v2alpha5",
@@ -27,7 +27,7 @@ var knownAPIVersions = []string{
 
 // Checks if a segment is a known API version
 func IsKnownAPIVersion(segment string) bool {
-	for _, v := range knownAPIVersions {
+	for _, v := range KnownAPIVersions {
 		if v == segment {
 			return true
 		}

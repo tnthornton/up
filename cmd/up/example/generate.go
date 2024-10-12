@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/pterm/pterm"
@@ -30,9 +31,8 @@ import (
 	"github.com/crossplane/crossplane/xcrd"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	exampleCrd "github.com/upbound/up/internal/crd"
+	icrd "github.com/upbound/up/internal/crd"
 )
 
 const (
@@ -44,7 +44,8 @@ const (
 )
 
 var (
-	crdGVK = schema.GroupVersionKind{Group: "apiextensions.k8s.io", Version: "v1", Kind: "CustomResourceDefinition"}
+	crdGVK        = apiextensionsv1.SchemeGroupVersion.WithKind("CustomResourceDefinition")
+	dnsLabelRegex = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 )
 
 type resource struct {
@@ -61,6 +62,8 @@ type generateCmd struct {
 	APIGroup   string `help:"Specifies the API group for the resource."`
 	APIVersion string `help:"Specifies the API version for the resource."`
 	Kind       string `help:"Specifies the Kind of the resource."`
+	Name       string `help:"Specifies the Name of the resource."`
+	Namespace  string `help:"Specifies the Namespace of the resource."`
 
 	XRDFilePath string `arg:"" optional:"" help:"Specifies the path to the Composite Resource Definition (XRD) file used to generate an example resource."`
 }
@@ -138,7 +141,7 @@ func (c *generateCmd) createCRDFromXRD(xrd v1.CompositeResourceDefinition) (*api
 func (c *generateCmd) generateResourceFromCRD(crd *apiextensionsv1.CustomResourceDefinition) (resource, error) {
 	var res resource
 
-	yamlData, err := exampleCrd.GenerateExample(*crd, true, false)
+	yamlData, err := icrd.GenerateExample(*crd, true, false)
 	if err != nil {
 		return res, errors.Wrapf(err, "failed generating example")
 	}
@@ -153,7 +156,7 @@ func (c *generateCmd) generateResourceFromCRD(crd *apiextensionsv1.CustomResourc
 		return res, errors.Wrapf(err, "failed to unmarshal generated schema")
 	}
 
-	res.ObjectMeta.Name = fmt.Sprintf("example-%s", strings.ToLower(res.Kind))
+	res.ObjectMeta.Name = strings.ToLower(res.Kind)
 	if c.Type == "xrc" || c.Type == "claim" {
 		res.ObjectMeta.Namespace = "default"
 	}
@@ -163,18 +166,28 @@ func (c *generateCmd) generateResourceFromCRD(crd *apiextensionsv1.CustomResourc
 
 // processInput handles the logic when the XRD file path is not provided (interactive input)
 func (c *generateCmd) processInput() error {
-	resourceType, compositeName, apiGroup, apiVersion, err := c.collectInteractiveInput()
+	resourceType, compositeName, apiGroup, apiVersion, name, namespace, err := c.collectInteractiveInput()
 	if err != nil {
 		return err
 	}
 
-	resource := c.createResource(resourceType, compositeName, apiGroup, apiVersion)
+	resource, err := c.createResource(resourceType, compositeName, apiGroup, apiVersion, name, namespace)
+	if err != nil {
+		return errors.Wrap(err, "failed to create xrd")
+	}
+
 	return c.outputResource(resource)
 }
 
-// collectInteractiveInput collects user input interactively
-func (c *generateCmd) collectInteractiveInput() (string, string, string, string, error) {
-	return c.getInteractiveType(), c.getInteractiveName(c.Type), c.getInteractiveGroup(), c.getInteractiveVersion(), nil
+func (c *generateCmd) collectInteractiveInput() (string, string, string, string, string, string, error) {
+	// Collect the resource type, kind, API group, API version, metadata.name and metadata.namespace
+	return c.getInteractiveType(),
+		c.getInteractiveKind(c.Type),
+		c.getInteractiveGroup(),
+		c.getInteractiveVersion(),
+		c.getInteractiveMetadataName(),
+		c.getInteractiveMetadataNamespace(c.Type),
+		nil
 }
 
 // getInteractiveType gets the resource type interactively
@@ -206,8 +219,8 @@ func (c *generateCmd) getInteractiveType() string {
 	return cType
 }
 
-// getInteractiveName gets the resource name interactively
-func (c *generateCmd) getInteractiveName(resourceType string) string {
+// getInteractiveKind gets the resource kind interactively
+func (c *generateCmd) getInteractiveKind(resourceType string) string {
 	if c.Kind != "" {
 		return c.Kind
 	}
@@ -215,11 +228,11 @@ func (c *generateCmd) getInteractiveName(resourceType string) string {
 	var input pterm.InteractiveTextInputPrinter
 	if resourceType == "xrc" {
 		input = *pterm.DefaultInteractiveTextInput.
-			WithDefaultText("What is your Composite Resource Claim (XRC) named?").
+			WithDefaultText("What is your Composite Resource Claim (XRC) kind?").
 			WithDefaultValue("Cluster")
 	} else {
 		input = *pterm.DefaultInteractiveTextInput.
-			WithDefaultText("What is your Composite Resource (XR) named?").
+			WithDefaultText("What is your Composite Resource (XR) kind?").
 			WithDefaultValue("XCluster")
 	}
 
@@ -270,24 +283,85 @@ func (c *generateCmd) getInteractiveVersion() string {
 	return version
 }
 
+// getInteractiveMetadataName gets the metadata.name interactively
+func (c *generateCmd) getInteractiveMetadataName() string {
+	if c.Name != "" {
+		return c.Name
+	}
+
+	input := *pterm.DefaultInteractiveTextInput.
+		WithDefaultText("What is the metadata name?").
+		WithDefaultValue("example")
+
+	name, err := input.Show()
+	if err != nil {
+		pterm.Error.Println("An error occurred while getting metadata.name:", err)
+		return ""
+	}
+
+	return name
+}
+
+// getInteractiveMetadataNamespace gets the metadata.namespace interactively
+func (c *generateCmd) getInteractiveMetadataNamespace(resourceType string) string {
+	if c.Namespace != "" {
+		return c.Namespace
+	}
+
+	if resourceType != "xrc" {
+		return ""
+	}
+
+	input := *pterm.DefaultInteractiveTextInput.
+		WithDefaultText("What is the metadata namespace?").
+		WithDefaultValue("default")
+
+	namespace, err := input.Show()
+	if err != nil {
+		pterm.Error.Println("An error occurred while getting metadata.namespace:", err)
+		return ""
+	}
+
+	return namespace
+}
+
 // createResource creates a resource based on the collected input
-func (c *generateCmd) createResource(resourceType, compositeName, apiGroup, apiVersion string) resource {
-	res := resource{
+func (c *generateCmd) createResource(resourceType, compositeName, apiGroup, apiVersion, name, namespace string) (resource, error) {
+	var res resource
+	// Check if required fields are missing or invalid
+	if compositeName == "" {
+		return res, errors.New("compositeName is required")
+	}
+	if apiGroup == "" {
+		return res, errors.New("apiGroup is required")
+	}
+	if resourceType == "" {
+		return res, errors.New("resourceType is required")
+	}
+	if apiVersion == "" || !icrd.IsKnownAPIVersion(apiVersion) {
+		return res, fmt.Errorf("apiVersion is required or invalid. Valid versions are: %v", icrd.KnownAPIVersions)
+	}
+	validatedNamespace, err := validateNameNamespace(name, namespace)
+	if err != nil {
+		return res, err
+	}
+
+	res = resource{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: fmt.Sprintf("%s/%s", apiGroup, apiVersion),
 			Kind:       compositeName,
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name: fmt.Sprintf("example-%s", strings.ToLower(compositeName)),
+			Name: strings.ToLower(name),
 		},
 		Spec: map[string]interface{}{},
 	}
 
 	if resourceType == "xrc" || resourceType == "claim" {
-		res.ObjectMeta.Namespace = "default"
+		res.ObjectMeta.Namespace = strings.ToLower(validatedNamespace)
 	}
 
-	return res
+	return res, nil
 }
 
 // outputResource handles the output of the generated resource based on the specified output type
@@ -316,7 +390,7 @@ func (c *generateCmd) outputResource(res resource) error {
 	case outputFile:
 		filePath := c.Path
 		if filePath == "" {
-			filePath = fmt.Sprintf("examples/%s/example-%s.yaml", strings.ToLower(res.Kind), strings.ToLower(res.Kind))
+			filePath = fmt.Sprintf("examples/%s/%s.yaml", strings.ToLower(res.Kind), strings.ToLower(res.ObjectMeta.Name))
 		}
 
 		outputDir := filepath.Dir(filepath.Clean(filePath))
@@ -342,4 +416,27 @@ func (c *generateCmd) outputResource(res resource) error {
 	}
 
 	return nil
+}
+
+// validateNameNamespace checks that the name and (if provided) the namespace are valid DNS labels
+func validateNameNamespace(name, namespace string) (string, error) {
+	if len(name) > 63 {
+		return "", errors.New("metadata.name must be no more than 63 characters")
+	}
+	if !dnsLabelRegex.MatchString(name) {
+		return "", errors.New("metadata.name is invalid: must be a valid DNS label (lowercase alphanumeric, may include hyphens)")
+	}
+
+	if namespace == "" {
+		namespace = "default"
+	} else {
+		if len(namespace) > 63 {
+			return "", errors.New("metadata.namespace must be no more than 63 characters")
+		}
+		if !dnsLabelRegex.MatchString(namespace) {
+			return "", errors.New("metadata.namespace is invalid: must be a valid DNS label (lowercase alphanumeric, may include hyphens)")
+		}
+	}
+
+	return namespace, nil
 }

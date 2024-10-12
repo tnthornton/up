@@ -22,13 +22,12 @@ import (
 	"github.com/crossplane/crossplane/xcrd"
 	"github.com/spf13/afero"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"sigs.k8s.io/yaml"
 )
 
 var (
-	crdGVK = schema.GroupVersionKind{Group: "apiextensions.k8s.io", Version: "v1", Kind: "CustomResourceDefinition"}
+	crdGVK = apiextensionsv1.SchemeGroupVersion.WithKind("CustomResourceDefinition")
 )
 
 // createCRDFromXRD creates a xrCRD and claimCRD if possible from the XRD

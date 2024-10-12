@@ -35,6 +35,7 @@ var xeksXRDYAML []byte
 func TestCreateResource(t *testing.T) {
 	type want struct {
 		res resource
+		err bool
 	}
 
 	cases := map[string]struct {
@@ -42,6 +43,8 @@ func TestCreateResource(t *testing.T) {
 		compositeName string
 		apiGroup      string
 		apiVersion    string
+		name          string
+		namespace     string
 		want          want
 	}{
 		"ValidXRCResource": {
@@ -49,6 +52,8 @@ func TestCreateResource(t *testing.T) {
 			compositeName: "Cluster",
 			apiGroup:      "customer.upbound.io",
 			apiVersion:    "v1alpha1",
+			name:          "cluster",
+			namespace:     "default",
 			want: want{
 				res: resource{
 					TypeMeta: metav1.TypeMeta{
@@ -56,7 +61,7 @@ func TestCreateResource(t *testing.T) {
 						Kind:       "Cluster",
 					},
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      "example-cluster",
+						Name:      "cluster",
 						Namespace: "default",
 					},
 					Spec: map[string]interface{}{},
@@ -68,6 +73,8 @@ func TestCreateResource(t *testing.T) {
 			compositeName: "XCluster",
 			apiGroup:      "customer.upbound.io",
 			apiVersion:    "v1alpha1",
+			name:          "cluster",
+			namespace:     "",
 			want: want{
 				res: resource{
 					TypeMeta: metav1.TypeMeta{
@@ -75,10 +82,58 @@ func TestCreateResource(t *testing.T) {
 						Kind:       "XCluster",
 					},
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "example-xcluster",
+						Name: "cluster",
 					},
 					Spec: map[string]interface{}{},
 				},
+			},
+		},
+		"EmptyCompositeName": {
+			resourceType:  "xrc",
+			compositeName: "",
+			apiGroup:      "customer.upbound.io",
+			apiVersion:    "v1alpha1",
+			name:          "cluster",
+			namespace:     "default",
+			want: want{
+				res: resource{},
+				err: true,
+			},
+		},
+		"EmptyAPIGroup": {
+			resourceType:  "xrc",
+			compositeName: "Cluster",
+			apiGroup:      "",
+			apiVersion:    "v1alpha1",
+			name:          "cluster",
+			namespace:     "default",
+			want: want{
+				res: resource{},
+				err: true,
+			},
+		},
+		"EmptyResourceType": {
+			resourceType:  "",
+			compositeName: "Cluster",
+			apiGroup:      "customer.upbound.io",
+			apiVersion:    "v1alpha1",
+			name:          "cluster",
+			namespace:     "default",
+			want: want{
+				res: resource{},
+				err: true,
+			},
+		},
+		"InvalidAPIVersion": {
+			resourceType:  "xrc",
+			compositeName: "Cluster",
+			apiGroup:      "customer.upbound.io",
+			apiVersion:    "invalid-version",
+			name:          "cluster",
+			namespace:     "default",
+			want: want{
+				res: resource{},
+				err: true,
 			},
 		},
 	}
@@ -86,7 +141,20 @@ func TestCreateResource(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			cmd := &generateCmd{}
-			got := cmd.createResource(tc.resourceType, tc.compositeName, tc.apiGroup, tc.apiVersion)
+			got, err := cmd.createResource(tc.resourceType, tc.compositeName, tc.apiGroup, tc.apiVersion, tc.name, tc.namespace)
+
+			// Check if an error was expected and occurred
+			if tc.want.err {
+				if err == nil {
+					t.Errorf("Expected an error but got none for test case %s", name)
+				}
+				return // Skip further checks if we expected an error
+			}
+
+			// Ensure no unexpected error occurred
+			if err != nil {
+				t.Errorf("Unexpected error for test case %s: %v", name, err)
+			}
 
 			// Compare the output resource
 			if diff := cmp.Diff(got, tc.want.res); diff != "" {
@@ -154,7 +222,7 @@ func TestCreateCRDAndGenerateResource(t *testing.T) {
 						Kind:       "XEKS",
 					},
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "example-xeks",
+						Name: "xeks",
 					},
 					Spec: map[string]interface{}{
 						"parameters": map[string]interface{}{
