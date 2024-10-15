@@ -15,10 +15,8 @@
 package composition
 
 import (
-	"bytes"
 	"context"
 	"embed"
-	"io"
 	"io/fs"
 	"path/filepath"
 	"testing"
@@ -26,9 +24,6 @@ import (
 	v1 "github.com/crossplane/crossplane/apis/apiextensions/v1"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	"github.com/google/go-containerregistry/pkg/name"
-	cv1 "github.com/google/go-containerregistry/pkg/v1"
-	"github.com/google/go-containerregistry/pkg/v1/tarball"
 	"github.com/spf13/afero"
 	"gotest.tools/v3/assert"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -45,17 +40,19 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-//go:embed testdata/projectA/*
-var projectAFS embed.FS
+var (
+	//go:embed testdata/projectA/*
+	projectAFS embed.FS
 
-//go:embed testdata/projectB/*
-var projectBFS embed.FS
+	//go:embed testdata/projectB/*
+	projectBFS embed.FS
 
-//go:embed testdata/function-auto-ready-v0.2.1.xpkg
-var functionAutoReady []byte
+	//go:embed testdata/packages/*
+	packagesFS embed.FS
 
-//go:embed testdata/cel.fn.crossplane.io_filters.yaml
-var celYAML []byte
+	//go:embed testdata/cel.fn.crossplane.io_filters.yaml
+	celYAML []byte
+)
 
 func TestNewComposition(t *testing.T) {
 	type want struct {
@@ -84,8 +81,24 @@ func TestNewComposition(t *testing.T) {
 	err = ws.Parse(context.Background()) // Parse the workspace
 	assert.NilError(t, err)
 
+	// Set up a mock cache directory in Afero
+	cch, err := cache.NewLocal("/cache", cache.WithFS(fs))
+	assert.NilError(t, err)
+
+	// Create mock fetcher that holds the images
+	testPkgFS := afero.NewBasePathFs(afero.FromIOFS{FS: packagesFS}, "testdata/packages")
+
+	r := image.NewResolver(
+		image.WithFetcher(
+			&image.FSFetcher{FS: testPkgFS},
+		),
+	)
+
 	// Initialize the dependency manager
-	mgr, err := manager.New()
+	mgr, err := manager.New(
+		manager.WithCache(cch),
+		manager.WithResolver(r),
+	)
 	assert.NilError(t, err)
 
 	// Construct a workspace from the test filesystem.
@@ -247,32 +260,12 @@ func TestFunctionAutoReadyAddToCompositionAndProject(t *testing.T) {
 	cch, err := cache.NewLocal("/cache", cache.WithFS(fs))
 	assert.NilError(t, err)
 
-	// 1. Create function-auto-ready image
-	functionXpkg, err := tarball.Image(func() (io.ReadCloser, error) {
-		return io.NopCloser(bytes.NewReader(functionAutoReady)), nil
-	}, nil)
-	assert.NilError(t, err)
-	functionTag, err := name.NewTag("xpkg.upbound.io/crossplane-contrib/function-cel-filter:v0.1.1")
-	assert.NilError(t, err)
-
 	// Create mock fetcher that holds the images
-
-	mt, err := functionXpkg.MediaType()
-	assert.NilError(t, err)
-	dgst, err := functionXpkg.Digest()
-	assert.NilError(t, err)
-	imgDesc := &cv1.Descriptor{
-		MediaType: mt,
-		Digest:    dgst,
-	}
+	testPkgFS := afero.NewBasePathFs(afero.FromIOFS{FS: packagesFS}, "testdata/packages")
 
 	r := image.NewResolver(
 		image.WithFetcher(
-			image.NewMockFetcher(
-				image.WithImage(functionXpkg),
-				image.WithDescriptor(imgDesc),
-				image.WithTags([]string{functionTag.TagStr()}),
-			),
+			&image.FSFetcher{FS: testPkgFS},
 		),
 	)
 
