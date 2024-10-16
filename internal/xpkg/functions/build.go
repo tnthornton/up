@@ -379,6 +379,7 @@ func newPythonBuilder() *pythonBuilder {
 		// TODO(negz): This'll need to change if function-interpreter-python is
 		// updated to a distroless base layer that uses a newer Python version.
 		packagePath: "/venv/fn/lib/python3.11/site-packages/function",
+		transport:   http.DefaultTransport,
 	}
 }
 
