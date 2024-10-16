@@ -34,7 +34,7 @@ NPROCS ?= 1
 # to half the number of CPU cores.
 GO_TEST_PARALLEL := $(shell echo $$(( $(NPROCS) / 2 )))
 
-GO_STATIC_PACKAGES = $(GO_PROJECT)/cmd/up $(GO_PROJECT)/cmd/docker-credential-up
+GO_STATIC_PACKAGES = $(GO_PROJECT)/cmd/up $(GO_PROJECT)/cmd/docker-credential-up $(GO_PROJECT)/cmd/schema-generator
 GO_LDFLAGS += -X $(GO_PROJECT)/internal/version.version=$(VERSION)
 ifneq ($(UP_CONNECT_AGENT_VERSION),)
 GO_LDFLAGS += -X $(GO_PROJECT)/internal/version.agentVersion=$(UP_CONNECT_AGENT_VERSION)
@@ -79,6 +79,7 @@ build.init: build.bundle.init
 build.bundle.init:
 	@mkdir -p $(abspath $(OUTPUT_DIR)/bundle/up)
 	@mkdir -p $(abspath $(OUTPUT_DIR)/bundle/docker-credential-up)
+	@mkdir -p $(abspath $(OUTPUT_DIR)/bundle/schema-generator)
 
 ifeq ($(OS), linux)
 ifneq ($(HOSTOS), darwin)
@@ -93,6 +94,8 @@ build.artifacts.bundle.platform:
 	@tar -czvf $(abspath $(OUTPUT_DIR)/bundle/up/$(PLATFORM)).tar.gz -C $(GO_BIN_DIR) $(PLATFORM)/up$(GO_OUT_EXT) $(PLATFORM)/up.sha256
 	@$(SHA256SUM) $(GO_OUT_DIR)/docker-credential-up$(GO_OUT_EXT) | head -c 64 >  $(GO_OUT_DIR)/docker-credential-up.sha256
 	@tar -czvf $(abspath $(OUTPUT_DIR)/bundle/docker-credential-up/$(PLATFORM)).tar.gz -C $(GO_BIN_DIR) $(PLATFORM)/docker-credential-up$(GO_OUT_EXT) $(PLATFORM)/docker-credential-up.sha256
+	@$(SHA256SUM) $(GO_OUT_DIR)/schema-generator$(GO_OUT_EXT) | head -c 64 >  $(GO_OUT_DIR)/schema-generator.sha256
+	@tar -czvf $(abspath $(OUTPUT_DIR)/bundle/schema-generator/$(PLATFORM)).tar.gz -C $(GO_BIN_DIR) $(PLATFORM)/schema-generator$(GO_OUT_EXT) $(PLATFORM)/schema-generator.sha256
 
 build.artifacts.pkg.platform:
 	@mkdir -p $(CACHE_DIR)
@@ -100,6 +103,7 @@ build.artifacts.pkg.platform:
 	@mkdir -p $(OUTPUT_DIR)/rpm/$(PLATFORM)
 	@cat $(ROOT_DIR)/nfpm_up.yaml | GO_BIN_DIR=$(GO_BIN_DIR) envsubst > $(CACHE_DIR)/nfpm_up.yaml
 	@cat $(ROOT_DIR)/nfpm_docker-credential-up.yaml | GO_BIN_DIR=$(GO_BIN_DIR) envsubst > $(CACHE_DIR)/nfpm_docker-credential-up.yaml
+	@cat $(ROOT_DIR)/nfpm_schema-generator.yaml | GO_BIN_DIR=$(GO_BIN_DIR) envsubst > $(CACHE_DIR)/nfpm_schema-generator.yaml
 	@CACHE_DIR=$(CACHE_DIR) OUTPUT_DIR=$(OUTPUT_DIR) PLATFORM=$(PLATFORM) PACKAGER=deb $(GO) generate -tags packaging ./...
 	@CACHE_DIR=$(CACHE_DIR) OUTPUT_DIR=$(OUTPUT_DIR) PLATFORM=$(PLATFORM) PACKAGER=rpm $(GO) generate -tags packaging ./...
 
@@ -125,3 +129,15 @@ go.cachedir:
 
 go.mod.cachedir:
 	@go env GOMODCACHE
+
+# NOTE(haarchri):
+# We don't want to publish any files related to 'schema-generator' to the public S3 bucket.
+# This includes files like 'schema-generator', 'schema-generator.sha256', etc.
+# https://github.com/upbound/up-private/pull/115
+output.publish:
+	@$(INFO) cleaning up files and directories containing 'schema-generator' in $(OUTPUT_DIR)
+	@find $(OUTPUT_DIR) -name '*schema-generator*' -type f -exec rm -f {} \;
+	@find $(OUTPUT_DIR) -name '*schema-generator*' -type d -prune -exec rm -rf {} \; 2>/dev/null || true
+	@$(INFO) publishing outputs to s3://$(S3_BUCKET)/build/$(BRANCH_NAME)/$(VERSION)
+	@$(S3_SYNC_DEL) $(OUTPUT_DIR) s3://$(S3_BUCKET)/build/$(BRANCH_NAME)/$(VERSION) || $(FAIL)
+	@$(OK) publishing outputs to s3://$(S3_BUCKET)/build/$(BRANCH_NAME)/$(VERSION)
