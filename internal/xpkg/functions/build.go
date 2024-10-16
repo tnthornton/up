@@ -252,9 +252,10 @@ func (b *pythonBuilder) Build(ctx context.Context, fromFS afero.Fs, architecture
 	eg, _ := errgroup.WithContext(ctx)
 	for i, arch := range architectures {
 		eg.Go(func() error {
-			// TODO(negz): The function-interpreter-python base image doesn't
-			// have a package, examples, or schema layer. Is this needed?
-			baseImg, err := baseImageForArch(baseRef, arch, b.transport)
+			baseImg, err := remote.Image(baseRef, remote.WithPlatform(v1.Platform{
+				OS:           "linux",
+				Architecture: arch,
+			}), remote.WithTransport(b.transport))
 			if err != nil {
 				return errors.Wrap(err, "failed to fetch python base image")
 			}

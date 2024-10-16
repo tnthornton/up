@@ -203,21 +203,10 @@ func TestPythonBuild(t *testing.T) {
 	testRegistry, err := name.NewRegistry(strings.TrimPrefix(regSrv.URL, "https://"))
 	assert.NilError(t, err)
 
-	// Put an base image in the registry that contains only a package layer. The
-	// package layer should be removed when we build a function on top of it.
-	// TODO(negz): This isn't really needed for Python.
+	// Put an base image in the registry.
 	baseImageRef := testRegistry.Repo("unittest-base-image").Tag("latest")
 	baseImage, err := mutate.ConfigFile(empty.Image, &v1.ConfigFile{
 		Architecture: "amd64",
-	})
-	assert.NilError(t, err)
-	baseLayer, err := random.Layer(1, types.OCILayer)
-	assert.NilError(t, err)
-	baseImage, err = mutate.Append(baseImage, mutate.Addendum{
-		Layer: baseLayer,
-		Annotations: map[string]string{
-			xpkg.AnnotationKey: xpkg.PackageAnnotation,
-		},
 	})
 	assert.NilError(t, err)
 	err = remote.Put(baseImageRef, baseImage, remote.WithTransport(regSrv.Client().Transport))
