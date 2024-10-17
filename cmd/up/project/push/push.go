@@ -37,8 +37,8 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/upbound/up-sdk-go/service/repositories"
-	"github.com/upbound/up/cmd/up/project/build"
 	"github.com/upbound/up/internal/credhelper"
+	"github.com/upbound/up/internal/project"
 	"github.com/upbound/up/internal/upbound"
 	"github.com/upbound/up/internal/upterm"
 	"github.com/upbound/up/internal/xpkg"
@@ -105,12 +105,12 @@ func (c *Cmd) Run(ctx context.Context, upCtx *upbound.Context, p pterm.TextPrint
 		c.MaxConcurrency = 1
 	}
 
-	project, err := c.parseProject()
+	proj, err := c.parseProject()
 	if err != nil {
 		return err
 	}
 
-	imgTag, err := name.NewTag(fmt.Sprintf("%s:%s", project.Spec.Repository, c.Tag))
+	imgTag, err := name.NewTag(fmt.Sprintf("%s:%s", proj.Spec.Repository, c.Tag))
 	if err != nil {
 		return errors.Wrap(err, "failed to construct image tag")
 	}
@@ -126,7 +126,7 @@ func (c *Cmd) Run(ctx context.Context, upCtx *upbound.Context, p pterm.TextPrint
 	}
 
 	if c.PackageFile == "" {
-		c.PackageFile = fmt.Sprintf("%s.uppkg", project.Name)
+		c.PackageFile = fmt.Sprintf("%s.uppkg", proj.Name)
 	}
 
 	// Collect the images from the on-disk package and sort them into
@@ -135,7 +135,7 @@ func (c *Cmd) Run(ctx context.Context, upCtx *upbound.Context, p pterm.TextPrint
 		cfgImage v1.Image
 		fnImages map[name.Repository][]v1.Image
 	)
-	cfgTag, err := name.NewTag(fmt.Sprintf("%s:%s", project.Spec.Repository, build.ConfigurationTag))
+	cfgTag, err := name.NewTag(fmt.Sprintf("%s:%s", proj.Spec.Repository, project.ConfigurationTag))
 	if err != nil {
 		return errors.Wrap(err, "failed to construct configuration tag")
 	}

@@ -16,6 +16,7 @@ package upterm
 
 import (
 	"fmt"
+	"io"
 
 	"github.com/pterm/pterm"
 )
@@ -74,4 +75,19 @@ func WrapWithSuccessSpinner(msg string, spinner *pterm.SpinnerPrinter, f func() 
 
 func StepCounter(msg string, index, total int) string {
 	return fmt.Sprintf("[%d/%d]: %s", index, total, msg)
+}
+
+// NewCheckmarkSuccessSpinner returns a new spinner that writes to the given
+// writer and prints an Upbound-branded checkmark on success. This spinner will
+// behave the same as the CheckmarkSuccessPrinter but multiple of them can be
+// used at once (in a single thread - pterm is not concurrency-safe) since they
+// don't share state.
+func NewCheckmarkSuccessSpinner(w io.Writer) *pterm.SpinnerPrinter {
+	sp := pterm.DefaultSpinner
+	sp.SuccessPrinter = cp
+	sp.Writer = w
+	sp.MessageStyle = msgStyle
+	sp.Style = spinnerStyle
+
+	return &sp
 }

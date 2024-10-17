@@ -29,19 +29,19 @@ func TestParse(t *testing.T) {
 		name          string
 		setupFs       func(fs afero.Fs)
 		projectFile   string
-		repository    string
 		expectErr     bool
 		expectedPaths *v1alpha1.ProjectPaths
 	}{
 		{
-			name: "ValidProjectFileNoRepository",
+			name: "ValidProjectFileAllPaths",
 			setupFs: func(fs afero.Fs) {
 				yamlContent := `
 apiVersion: v1alpha1
 kind: Project
 metadata:
-  name: ValidProjectFileNoRepository
+  name: ValidProjectFileAllPaths
 spec:
+  repository: xpkg.upbound.io/upbound/getting-started
   paths:
     apis: "apis"
     examples: "example"
@@ -50,7 +50,6 @@ spec:
 				afero.WriteFile(fs, "/project.yaml", []byte(yamlContent), os.ModePerm)
 			},
 			projectFile: "/project.yaml",
-			repository:  "xpkg.upbound.io/upbound/getting-started",
 			expectErr:   false,
 			expectedPaths: &v1alpha1.ProjectPaths{
 				APIs:      "/apis",
@@ -59,27 +58,25 @@ spec:
 			},
 		},
 		{
-			name: "ValidProjectFileWithRepositoryOverride",
+			name: "ValidProjectFileSomePaths",
 			setupFs: func(fs afero.Fs) {
 				yamlContent := `
 apiVersion: v1alpha1
 kind: Project
 metadata:
-  name: ValidProjectFileWithRepositoryOverride
+  name: ValidProjectFileSomePaths
 spec:
+  repository: xpkg.upbound.io/upbound/getting-started
   paths:
-    apis: "apis"
-    examples: "example"
     functions: "funcs"
 `
 				afero.WriteFile(fs, "/project.yaml", []byte(yamlContent), os.ModePerm)
 			},
 			projectFile: "/project.yaml",
-			repository:  "xpkg.upbound.io/upbound/getting-started",
 			expectErr:   false,
 			expectedPaths: &v1alpha1.ProjectPaths{
-				APIs:      "/apis",
-				Examples:  "/example",
+				APIs:      "/",
+				Examples:  "/examples",
 				Functions: "/funcs",
 			},
 		},
@@ -89,7 +86,6 @@ spec:
 				afero.WriteFile(fs, "/project.yaml", []byte("invalid yaml content"), os.ModePerm)
 			},
 			projectFile:   "/project.yaml",
-			repository:    "xpkg.upbound.io/upbound/getting-started",
 			expectErr:     true,
 			expectedPaths: nil,
 		},
@@ -107,7 +103,6 @@ spec:
 				afero.WriteFile(fs, "/project.yaml", []byte(yamlContent), os.ModePerm)
 			},
 			projectFile: "/project.yaml",
-			repository:  "",
 			expectErr:   false,
 			expectedPaths: &v1alpha1.ProjectPaths{
 				APIs:      "/",
@@ -120,7 +115,6 @@ spec:
 			setupFs: func(fs afero.Fs) {
 			},
 			projectFile:   "/nonexistent.yaml",
-			repository:    "",
 			expectErr:     true,
 			expectedPaths: nil,
 		},
@@ -132,7 +126,7 @@ spec:
 
 			tt.setupFs(fs)
 
-			_, paths, err := Parse(fs, tt.projectFile, tt.repository)
+			proj, err := Parse(fs, tt.projectFile)
 
 			if tt.expectErr {
 				require.Error(t, err)
@@ -141,7 +135,7 @@ spec:
 
 			require.NoError(t, err)
 
-			require.Equal(t, tt.expectedPaths, paths, "incorrect paths for project")
+			require.Equal(t, tt.expectedPaths, proj.Spec.Paths, "incorrect paths for project")
 		})
 	}
 }
