@@ -242,7 +242,7 @@ func (b *pythonBuilder) match(fromFS afero.Fs) (bool, error) {
 	return afero.Exists(fromFS, "main.py")
 }
 
-func (b *pythonBuilder) Build(ctx context.Context, fromFS afero.Fs, architectures []string) ([]v1.Image, error) {
+func (b *pythonBuilder) Build(ctx context.Context, fromFS afero.Fs, architectures []string, osBasePath *string) ([]v1.Image, error) {
 	baseRef, err := name.NewTag(b.baseImage)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to parse python base image tag")
@@ -260,7 +260,7 @@ func (b *pythonBuilder) Build(ctx context.Context, fromFS afero.Fs, architecture
 				return errors.Wrap(err, "failed to fetch python base image")
 			}
 
-			src, err := filesystem.FSToTar(fromFS, b.packagePath)
+			src, err := filesystem.FSToTar(fromFS, b.packagePath, osBasePath)
 			if err != nil {
 				return errors.Wrap(err, "failed to tar layer contents")
 			}
