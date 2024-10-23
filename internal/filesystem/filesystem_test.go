@@ -96,7 +96,7 @@ func TestFSToTar(t *testing.T) {
 			tt.setupFs(fs)
 
 			// Run the FSToTar function.
-			tarData, err := FSToTar(fs, tt.prefix)
+			tarData, err := FSToTar(fs, tt.prefix, nil)
 
 			// Validate errors if expected.
 			if tt.expectErr {
@@ -229,6 +229,59 @@ func TestCopyFilesBetweenFs(t *testing.T) {
 				require.NoError(t, err, "Expected file %s not found in destination filesystem", filePath)
 				require.Equal(t, expectedContent, string(data), "Content mismatch for file %s", filePath)
 			}
+		})
+	}
+}
+
+// TestIsFsEmpty tests the IsFsEmpty function.
+func TestIsFsEmpty(t *testing.T) {
+	tests := []struct {
+		name          string
+		setupFs       func(fs afero.Fs)
+		expectedEmpty bool
+		expectErr     bool
+	}{
+		{
+			name: "EmptyFileSystem",
+			setupFs: func(fs afero.Fs) {
+			},
+			expectedEmpty: true,
+			expectErr:     false,
+		},
+		{
+			name: "SingleFileInRoot",
+			setupFs: func(fs afero.Fs) {
+				afero.WriteFile(fs, "file.txt", []byte("content"), os.ModePerm)
+			},
+			expectedEmpty: false,
+			expectErr:     false,
+		},
+		{
+			name: "NestedDirectoryWithFile",
+			setupFs: func(fs afero.Fs) {
+				fs.MkdirAll("dir", os.ModePerm)
+				afero.WriteFile(fs, "dir/file.txt", []byte("content"), os.ModePerm)
+			},
+			expectedEmpty: false,
+			expectErr:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := afero.NewMemMapFs()
+
+			tt.setupFs(fs)
+
+			isEmpty, err := IsFsEmpty(fs)
+
+			if tt.expectErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+
+			require.Equal(t, tt.expectedEmpty, isEmpty)
 		})
 	}
 }

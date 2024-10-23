@@ -28,6 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/yaml"
 
+	"github.com/upbound/up/internal/filesystem"
 	"github.com/upbound/up/internal/xpkg"
 	rxpkg "github.com/upbound/up/internal/xpkg/dep/marshaler/xpkg"
 )
@@ -115,6 +116,11 @@ func (e *entry) flush() (*flushstats, error) {
 		return stats, err
 	}
 	stats.combine(objstats)
+
+	err = e.writeSchemas(e.pkg.Schema)
+	if err != nil {
+		return stats, err
+	}
 
 	// writing empty digest file
 	_, err = e.fs.Create(filepath.Join(e.location(), e.pkg.Digest()))
@@ -326,4 +332,15 @@ func (s *flushstats) combine(src *flushstats) {
 	s.crds += src.crds
 	s.metas += src.metas
 	s.xrds += src.xrds
+}
+
+func (e *entry) writeSchemas(schemaFS map[string]afero.Fs) error {
+	for language, fs := range schemaFS {
+		targetFS := afero.NewBasePathFs(afero.NewOsFs(), filepath.Join(e.location(), fmt.Sprintf("schema.%s", language)))
+		if err := filesystem.CopyFilesBetweenFs(fs, targetFS); err != nil {
+			return errors.Wrapf(err, "failed to write %s schema to disk", language)
+		}
+	}
+
+	return nil
 }

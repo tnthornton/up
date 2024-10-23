@@ -63,7 +63,7 @@ func (r RealSchemaRunner) Generate(ctx context.Context, fromFS afero.Fs, baseFol
 	}
 
 	// Create the tarball from the Afero filesystem
-	tarBuffer, err := filesystem.FSToTar(fromFS, baseFolder)
+	tarBuffer, err := filesystem.FSToTar(fromFS, baseFolder, nil)
 	if err != nil {
 		return errors.Wrapf(err, "failed to create tar from fs")
 	}

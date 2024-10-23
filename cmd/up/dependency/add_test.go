@@ -15,17 +15,13 @@
 package dependency
 
 import (
-	"bytes"
 	"context"
-	_ "embed"
-	"io"
+	"embed"
 	"testing"
 
 	pkgmetav1 "github.com/crossplane/crossplane/apis/pkg/meta/v1"
 	pkgv1beta1 "github.com/crossplane/crossplane/apis/pkg/v1beta1"
 	"github.com/google/go-containerregistry/pkg/name"
-	v1 "github.com/google/go-containerregistry/pkg/v1"
-	"github.com/google/go-containerregistry/pkg/v1/tarball"
 	"github.com/pterm/pterm"
 	"github.com/spf13/afero"
 	"gotest.tools/v3/assert"
@@ -43,24 +39,13 @@ import (
 )
 
 var (
-	// NOTE: The dependency manager will try to recursively resolve
-	// dependencies, but we can only load one package into the mock fetcher, so
-	// we can't test with any packages that have dependencies. The function and
-	// provider in testdata are real ones from marketplace (fetched with crane),
-	// while the configuration is a fake one built without any dependencies.
-
-	//go:embed testdata/function-auto-ready-v0.2.1.xpkg
-	functionXpkgBytes []byte
-	//go:embed testdata/provider-nop-v0.2.1.xpkg
-	providerXpkgBytes []byte
-	//go:embed testdata/configuration-empty-v0.1.0.xpkg
-	configurationXpkgBytes []byte
+	//go:embed testdata/packages/*
+	packagesFS embed.FS
 )
 
 type addTestCase struct {
 	inputDeps    []pkgmetav1.Dependency
 	newPackage   string
-	image        v1.Image
 	imageTag     name.Tag
 	packageType  pkgv1beta1.PackageType
 	expectedDeps []pkgmetav1.Dependency
@@ -69,265 +54,225 @@ type addTestCase struct {
 }
 
 func TestAdd(t *testing.T) {
-	// Create images for use with the mock fetcher in tests.
-	functionXpkg, err := tarball.Image(func() (io.ReadCloser, error) {
-		return io.NopCloser(bytes.NewReader(functionXpkgBytes)), nil
-	}, nil)
-	assert.NilError(t, err)
-	functionTag, err := name.NewTag("xpkg.upbound.io/crossplane-contrib/function-auto-ready:v0.2.1")
-	assert.NilError(t, err)
-	providerXpkg, err := tarball.Image(func() (io.ReadCloser, error) {
-		return io.NopCloser(bytes.NewReader(providerXpkgBytes)), nil
-	}, nil)
-	assert.NilError(t, err)
-	providerTag, err := name.NewTag("xpkg.upbound.io/crossplane-contrib/provider-nop:v0.2.1")
-	assert.NilError(t, err)
-	configurationXpkg, err := tarball.Image(func() (io.ReadCloser, error) {
-		return io.NopCloser(bytes.NewReader(configurationXpkgBytes)), nil
-	}, nil)
-	assert.NilError(t, err)
-	configurationTag, err := name.NewTag("xpkg.upbound.io/example/configuration-empty:v0.1.0")
-	assert.NilError(t, err)
-
 	tcs := map[string]addTestCase{
 		"AddFunctionWithoutVersion": {
 			inputDeps:   nil,
-			newPackage:  functionTag.RepositoryStr(),
-			image:       functionXpkg,
-			imageTag:    functionTag,
+			newPackage:  "xpkg.upbound.io/crossplane-contrib/function-auto-ready",
+			imageTag:    name.MustParseReference("xpkg.upbound.io/crossplane-contrib/function-auto-ready:v0.2.1").(name.Tag),
 			packageType: pkgv1beta1.FunctionPackageType,
 			expectedDeps: []pkgmetav1.Dependency{{
-				Function: ptr.To(functionTag.RepositoryStr()),
+				Function: ptr.To("xpkg.upbound.io/crossplane-contrib/function-auto-ready"),
 				Version:  ">=v0.0.0",
 			}},
 		},
 		"AddProviderWithoutVersion": {
 			inputDeps:   nil,
-			newPackage:  providerTag.RepositoryStr(),
-			image:       providerXpkg,
-			imageTag:    providerTag,
+			newPackage:  "xpkg.upbound.io/crossplane-contrib/provider-nop",
+			imageTag:    name.MustParseReference("xpkg.upbound.io/crossplane-contrib/provider-nop:v0.2.1").(name.Tag),
 			packageType: pkgv1beta1.ProviderPackageType,
 			expectedDeps: []pkgmetav1.Dependency{{
-				Provider: ptr.To(providerTag.RepositoryStr()),
+				Provider: ptr.To("xpkg.upbound.io/crossplane-contrib/provider-nop"),
 				Version:  ">=v0.0.0",
 			}},
 		},
 		"AddConfigurationWithoutVersion": {
 			inputDeps:   nil,
-			newPackage:  configurationTag.RepositoryStr(),
-			image:       configurationXpkg,
-			imageTag:    configurationTag,
+			newPackage:  "xpkg.upbound.io/crossplane-contrib/configuration-empty",
+			imageTag:    name.MustParseReference("xpkg.upbound.io/crossplane-contrib/configuration-empty:v0.1.0").(name.Tag),
 			packageType: pkgv1beta1.ConfigurationPackageType,
 			expectedDeps: []pkgmetav1.Dependency{{
-				Configuration: ptr.To(configurationTag.RepositoryStr()),
+				Configuration: ptr.To("xpkg.upbound.io/crossplane-contrib/configuration-empty"),
 				Version:       ">=v0.0.0",
 			}},
 		},
 		"AddFunctionWithVersion": {
 			inputDeps:   nil,
-			newPackage:  functionTag.RepositoryStr() + "@" + functionTag.TagStr(),
-			image:       functionXpkg,
-			imageTag:    functionTag,
+			newPackage:  "xpkg.upbound.io/crossplane-contrib/function-auto-ready:v0.2.1",
+			imageTag:    name.MustParseReference("xpkg.upbound.io/crossplane-contrib/function-auto-ready:v0.2.1").(name.Tag),
 			packageType: pkgv1beta1.FunctionPackageType,
 			expectedDeps: []pkgmetav1.Dependency{{
-				Function: ptr.To(functionTag.RepositoryStr()),
-				Version:  functionTag.TagStr(),
+				Function: ptr.To("xpkg.upbound.io/crossplane-contrib/function-auto-ready"),
+				Version:  "v0.2.1",
 			}},
 		},
 		"AddFunctionWithSemVersion": {
 			inputDeps:   nil,
-			newPackage:  functionTag.RepositoryStr() + "@" + ">=v0.1.0",
-			image:       functionXpkg,
-			imageTag:    functionTag,
+			newPackage:  "xpkg.upbound.io/crossplane-contrib/function-auto-ready@>=v0.1.0",
+			imageTag:    name.MustParseReference("xpkg.upbound.io/crossplane-contrib/function-auto-ready:v0.2.1").(name.Tag),
 			packageType: pkgv1beta1.FunctionPackageType,
 			expectedDeps: []pkgmetav1.Dependency{{
-				Function: ptr.To(functionTag.RepositoryStr()),
+				Function: ptr.To("xpkg.upbound.io/crossplane-contrib/function-auto-ready"),
 				Version:  ">=v0.1.0",
 			}},
 		},
 		"AddFunctionWithSemVersionGreaterThan": {
 			inputDeps:   nil,
-			newPackage:  functionTag.RepositoryStr() + "@" + ">v0.1.0",
-			image:       functionXpkg,
-			imageTag:    functionTag,
+			newPackage:  "xpkg.upbound.io/crossplane-contrib/function-auto-ready@>v0.1.0",
+			imageTag:    name.MustParseReference("xpkg.upbound.io/crossplane-contrib/function-auto-ready:v0.2.1").(name.Tag),
 			packageType: pkgv1beta1.FunctionPackageType,
 			expectedDeps: []pkgmetav1.Dependency{{
-				Function: ptr.To(functionTag.RepositoryStr()),
+				Function: ptr.To("xpkg.upbound.io/crossplane-contrib/function-auto-ready"),
 				Version:  ">v0.1.0",
 			}},
 		},
 		"AddFunctionWithSemVersionLessThan": {
 			inputDeps:   nil,
-			newPackage:  functionTag.RepositoryStr() + "@" + "<v0.3.0",
-			image:       functionXpkg,
-			imageTag:    functionTag,
+			newPackage:  "xpkg.upbound.io/crossplane-contrib/function-auto-ready@<v0.3.0",
+			imageTag:    name.MustParseReference("xpkg.upbound.io/crossplane-contrib/function-auto-ready:v0.2.1").(name.Tag),
 			packageType: pkgv1beta1.FunctionPackageType,
 			expectedDeps: []pkgmetav1.Dependency{{
-				Function: ptr.To(functionTag.RepositoryStr()),
+				Function: ptr.To("xpkg.upbound.io/crossplane-contrib/function-auto-ready"),
 				Version:  "<v0.3.0",
 			}},
 		},
 		"AddFunctionWithSemVersionLessThanError": {
 			inputDeps:    nil,
-			newPackage:   functionTag.RepositoryStr() + "@" + "<v0.2.0",
-			image:        functionXpkg,
-			imageTag:     functionTag,
+			newPackage:   "xpkg.upbound.io/crossplane-contrib/function-auto-ready@<v0.2.0",
+			imageTag:     name.MustParseReference("xpkg.upbound.io/crossplane-contrib/function-auto-ready:v0.2.1").(name.Tag),
 			packageType:  pkgv1beta1.FunctionPackageType,
 			expectedDeps: nil,  // No dependencies should be added because of the version mismatch.
 			expectError:  true, // Add this field to indicate this test expects an error.
 		},
 		"AddProviderWithVersion": {
 			inputDeps:   nil,
-			newPackage:  providerTag.RepositoryStr() + "@" + providerTag.TagStr(),
-			image:       providerXpkg,
-			imageTag:    providerTag,
+			newPackage:  "xpkg.upbound.io/crossplane-contrib/provider-nop@v0.2.1",
+			imageTag:    name.MustParseReference("xpkg.upbound.io/crossplane-contrib/provider-nop:v0.2.1").(name.Tag),
 			packageType: pkgv1beta1.ProviderPackageType,
 			expectedDeps: []pkgmetav1.Dependency{{
-				Provider: ptr.To(providerTag.RepositoryStr()),
-				Version:  providerTag.TagStr(),
+				Provider: ptr.To("xpkg.upbound.io/crossplane-contrib/provider-nop"),
+				Version:  "v0.2.1",
 			}},
 		},
 		"AddProviderWithSemVersion": {
 			inputDeps:   nil,
-			newPackage:  providerTag.RepositoryStr() + "@" + "<=v0.3.0",
-			image:       providerXpkg,
-			imageTag:    providerTag,
+			newPackage:  "xpkg.upbound.io/crossplane-contrib/provider-nop@<=v0.3.0",
+			imageTag:    name.MustParseReference("xpkg.upbound.io/crossplane-contrib/provider-nop:v0.2.1").(name.Tag),
 			packageType: pkgv1beta1.ProviderPackageType,
 			expectedDeps: []pkgmetav1.Dependency{{
-				Provider: ptr.To(providerTag.RepositoryStr()),
+				Provider: ptr.To("xpkg.upbound.io/crossplane-contrib/provider-nop"),
 				Version:  "<=v0.3.0",
 			}},
 		},
 		"AddConfigurationWithVersion": {
 			inputDeps:   nil,
-			newPackage:  configurationTag.RepositoryStr() + "@" + configurationTag.TagStr(),
-			image:       configurationXpkg,
-			imageTag:    configurationTag,
+			newPackage:  "xpkg.upbound.io/crossplane-contrib/configuration-empty@v0.1.0",
+			imageTag:    name.MustParseReference("xpkg.upbound.io/crossplane-contrib/configuration-empty:v0.1.0").(name.Tag),
 			packageType: pkgv1beta1.ConfigurationPackageType,
 			expectedDeps: []pkgmetav1.Dependency{{
-				Configuration: ptr.To(configurationTag.RepositoryStr()),
-				Version:       configurationTag.TagStr(),
+				Configuration: ptr.To("xpkg.upbound.io/crossplane-contrib/configuration-empty"),
+				Version:       "v0.1.0",
 			}},
 		},
 		"AddConfigurationWithSemVersion": {
 			inputDeps:   nil,
-			newPackage:  configurationTag.RepositoryStr() + "@" + "<=v0.1.0",
-			image:       configurationXpkg,
-			imageTag:    configurationTag,
+			newPackage:  "xpkg.upbound.io/crossplane-contrib/configuration-empty@<=v0.1.0",
+			imageTag:    name.MustParseReference("xpkg.upbound.io/crossplane-contrib/configuration-empty:v0.1.0").(name.Tag),
 			packageType: pkgv1beta1.ConfigurationPackageType,
 			expectedDeps: []pkgmetav1.Dependency{{
-				Configuration: ptr.To(configurationTag.RepositoryStr()),
+				Configuration: ptr.To("xpkg.upbound.io/crossplane-contrib/configuration-empty"),
 				Version:       "<=v0.1.0",
 			}},
 		},
 		"AddConfigurationWithSemVersionNotAvailable": {
 			inputDeps:    nil,
-			newPackage:   configurationTag.RepositoryStr() + "@" + ">=v1.0.0",
-			image:        configurationXpkg,
-			imageTag:     configurationTag,
+			newPackage:   "xpkg.upbound.io/crossplane-contrib/configuration-empty@>=v1.0.0",
+			imageTag:     name.MustParseReference("xpkg.upbound.io/crossplane-contrib/configuration-empty:v0.1.0").(name.Tag),
 			packageType:  pkgv1beta1.ConfigurationPackageType,
 			expectedDeps: nil,  // No dependencies should be added because of the version mismatch.
 			expectError:  true, // Add this field to indicate this test expects an error.
 		},
 		"AddProviderWithExistingDeps": {
 			inputDeps: []pkgmetav1.Dependency{{
-				Function: ptr.To(functionTag.RepositoryStr()),
-				Version:  functionTag.TagStr(),
+				Function: ptr.To("xpkg.upbound.io/crossplane-contrib/function-auto-ready"),
+				Version:  "v0.2.1",
 			}},
-			newPackage:  providerTag.RepositoryStr() + "@" + providerTag.TagStr(),
-			image:       providerXpkg,
-			imageTag:    providerTag,
+			newPackage:  "xpkg.upbound.io/crossplane-contrib/provider-nop@v0.2.1",
+			imageTag:    name.MustParseReference("xpkg.upbound.io/crossplane-contrib/provider-nop:v0.2.1").(name.Tag),
 			packageType: pkgv1beta1.ProviderPackageType,
 			expectedDeps: []pkgmetav1.Dependency{
 				{
-					Function: ptr.To(functionTag.RepositoryStr()),
-					Version:  functionTag.TagStr(),
+					Function: ptr.To("xpkg.upbound.io/crossplane-contrib/function-auto-ready"),
+					Version:  "v0.2.1",
 				},
 				{
-					Provider: ptr.To(providerTag.RepositoryStr()),
-					Version:  providerTag.TagStr(),
+					Provider: ptr.To("xpkg.upbound.io/crossplane-contrib/provider-nop"),
+					Version:  "v0.2.1",
 				},
 			},
 		},
 		"UpdateFunction": {
 			inputDeps: []pkgmetav1.Dependency{{
-				Function: ptr.To(functionTag.RepositoryStr()),
+				Function: ptr.To("xpkg.upbound.io/crossplane-contrib/function-auto-ready"),
 				Version:  "v0.1.0",
 			}},
-			newPackage:  functionTag.RepositoryStr() + "@" + functionTag.TagStr(),
-			image:       functionXpkg,
-			imageTag:    functionTag,
+			newPackage:  "xpkg.upbound.io/crossplane-contrib/function-auto-ready:v0.2.1",
+			imageTag:    name.MustParseReference("xpkg.upbound.io/crossplane-contrib/function-auto-ready:v0.2.1").(name.Tag),
 			packageType: pkgv1beta1.FunctionPackageType,
 			expectedDeps: []pkgmetav1.Dependency{{
-				Function: ptr.To(functionTag.RepositoryStr()),
-				Version:  functionTag.TagStr(),
+				Function: ptr.To("xpkg.upbound.io/crossplane-contrib/function-auto-ready"),
+				Version:  "v0.2.1",
 			}},
 		},
 		"AddFunctionWithVersionColon": {
 			inputDeps:   nil,
-			newPackage:  functionTag.RepositoryStr() + ":" + functionTag.TagStr(),
-			image:       functionXpkg,
-			imageTag:    functionTag,
+			newPackage:  "xpkg.upbound.io/crossplane-contrib/function-auto-ready:v0.2.1",
+			imageTag:    name.MustParseReference("xpkg.upbound.io/crossplane-contrib/function-auto-ready:v0.2.1").(name.Tag),
 			packageType: pkgv1beta1.FunctionPackageType,
 			expectedDeps: []pkgmetav1.Dependency{{
-				Function: ptr.To(functionTag.RepositoryStr()),
-				Version:  functionTag.TagStr(),
+				Function: ptr.To("xpkg.upbound.io/crossplane-contrib/function-auto-ready"),
+				Version:  "v0.2.1",
 			}},
 		},
 		"AddProviderWithVersionColon": {
 			inputDeps:   nil,
-			newPackage:  providerTag.RepositoryStr() + ":" + providerTag.TagStr(),
-			image:       providerXpkg,
-			imageTag:    providerTag,
+			newPackage:  "xpkg.upbound.io/crossplane-contrib/provider-nop:v0.2.1",
+			imageTag:    name.MustParseReference("xpkg.upbound.io/crossplane-contrib/provider-nop:v0.2.1").(name.Tag),
 			packageType: pkgv1beta1.ProviderPackageType,
 			expectedDeps: []pkgmetav1.Dependency{{
-				Provider: ptr.To(providerTag.RepositoryStr()),
-				Version:  providerTag.TagStr(),
+				Provider: ptr.To("xpkg.upbound.io/crossplane-contrib/provider-nop"),
+				Version:  "v0.2.1",
 			}},
 		},
 		"AddConfigurationWithVersionColon": {
 			inputDeps:   nil,
-			newPackage:  configurationTag.RepositoryStr() + ":" + configurationTag.TagStr(),
-			image:       configurationXpkg,
-			imageTag:    configurationTag,
+			newPackage:  "xpkg.upbound.io/crossplane-contrib/configuration-empty:v0.1.0",
+			imageTag:    name.MustParseReference("xpkg.upbound.io/crossplane-contrib/configuration-empty:v0.1.0").(name.Tag),
 			packageType: pkgv1beta1.ConfigurationPackageType,
 			expectedDeps: []pkgmetav1.Dependency{{
-				Configuration: ptr.To(configurationTag.RepositoryStr()),
-				Version:       configurationTag.TagStr(),
+				Configuration: ptr.To("xpkg.upbound.io/crossplane-contrib/configuration-empty"),
+				Version:       "v0.1.0",
 			}},
 		},
 		"AddProviderWithExistingDepsColon": {
 			inputDeps: []pkgmetav1.Dependency{{
-				Function: ptr.To(functionTag.RepositoryStr()),
-				Version:  functionTag.TagStr(),
+				Function: ptr.To("xpkg.upbound.io/crossplane-contrib/function-auto-ready"),
+				Version:  "v0.2.1",
 			}},
-			newPackage:  providerTag.RepositoryStr() + ":" + providerTag.TagStr(),
-			image:       providerXpkg,
-			imageTag:    providerTag,
+			newPackage:  "xpkg.upbound.io/crossplane-contrib/provider-nop:v0.2.1",
+			imageTag:    name.MustParseReference("xpkg.upbound.io/crossplane-contrib/provider-nop:v0.2.1").(name.Tag),
 			packageType: pkgv1beta1.ProviderPackageType,
 			expectedDeps: []pkgmetav1.Dependency{
 				{
-					Function: ptr.To(functionTag.RepositoryStr()),
-					Version:  functionTag.TagStr(),
+					Function: ptr.To("xpkg.upbound.io/crossplane-contrib/function-auto-ready"),
+					Version:  "v0.2.1",
 				},
 				{
-					Provider: ptr.To(providerTag.RepositoryStr()),
-					Version:  providerTag.TagStr(),
+					Provider: ptr.To("xpkg.upbound.io/crossplane-contrib/provider-nop"),
+					Version:  "v0.2.1",
 				},
 			},
 		},
 		"UpdateFunctionColon": {
 			inputDeps: []pkgmetav1.Dependency{{
-				Function: ptr.To(functionTag.RepositoryStr()),
+				Function: ptr.To("xpkg.upbound.io/crossplane-contrib/function-auto-ready"),
 				Version:  "v0.1.0",
 			}},
-			newPackage:  functionTag.RepositoryStr() + ":" + functionTag.TagStr(),
-			image:       functionXpkg,
-			imageTag:    functionTag,
+			newPackage:  "xpkg.upbound.io/crossplane-contrib/function-auto-ready:v0.2.1",
+			imageTag:    name.MustParseReference("xpkg.upbound.io/crossplane-contrib/function-auto-ready:v0.2.1").(name.Tag),
 			packageType: pkgv1beta1.FunctionPackageType,
 			expectedDeps: []pkgmetav1.Dependency{{
-				Function: ptr.To(functionTag.RepositoryStr()),
-				Version:  functionTag.TagStr(),
+				Function: ptr.To("xpkg.upbound.io/crossplane-contrib/function-auto-ready"),
+				Version:  "v0.2.1",
 			}},
 		},
 	}
@@ -443,7 +388,6 @@ func TestAdd(t *testing.T) {
 }
 
 func (tc *addTestCase) Run(t *testing.T, makePkg func(deps []pkgmetav1.Dependency) pkgmetav1.Pkg) {
-	// Create test filesystem, populate project metadata file.
 	fs := afero.NewMemMapFs()
 	inputPkg := makePkg(tc.inputDeps)
 	bs, err := yaml.Marshal(inputPkg)
@@ -451,29 +395,22 @@ func (tc *addTestCase) Run(t *testing.T, makePkg func(deps []pkgmetav1.Dependenc
 	err = afero.WriteFile(fs, "/project/meta.yaml", bs, 0644)
 	assert.NilError(t, err)
 
-	// Create inputs: cache, image resolver populated with the image.
+	ws, err := workspace.New("/project", workspace.WithFS(fs), workspace.WithPermissiveParser())
+	assert.NilError(t, err)
+	err = ws.Parse(context.Background())
+	assert.NilError(t, err)
+
 	cch, err := cache.NewLocal("/cache", cache.WithFS(fs))
 	assert.NilError(t, err)
 
-	mt, err := tc.image.MediaType()
-	assert.NilError(t, err)
-	dgst, err := tc.image.Digest()
-	assert.NilError(t, err)
-	imgDesc := &v1.Descriptor{
-		MediaType: mt,
-		Digest:    dgst,
-	}
+	testPkgFS := afero.NewBasePathFs(afero.FromIOFS{FS: packagesFS}, "testdata/packages")
+
 	r := image.NewResolver(
 		image.WithFetcher(
-			image.NewMockFetcher(
-				image.WithImage(tc.image),
-				image.WithDescriptor(imgDesc),
-				image.WithTags([]string{tc.imageTag.TagStr()}),
-			),
+			&image.FSFetcher{FS: testPkgFS},
 		),
 	)
 
-	// Create a dependency manager that uses our cache and resolver.
 	mgr, err := manager.New(
 		manager.WithCache(cch),
 		manager.WithResolver(r),
@@ -481,7 +418,7 @@ func (tc *addTestCase) Run(t *testing.T, makePkg func(deps []pkgmetav1.Dependenc
 	assert.NilError(t, err)
 
 	// Construct a workspace from the test filesystem.
-	ws, err := workspace.New("/project",
+	ws, err = workspace.New("/project",
 		workspace.WithFS(fs),
 		workspace.WithPermissiveParser(),
 	)
@@ -533,7 +470,7 @@ func (tc *addTestCase) Run(t *testing.T, makePkg func(deps []pkgmetav1.Dependenc
 
 	// Verify that the dep was added to the cache.
 	cchPkg, err := cch.Get(pkgv1beta1.Dependency{
-		Package:     tc.imageTag.RepositoryStr(),
+		Package:     tc.imageTag.RegistryStr() + "/" + tc.imageTag.RepositoryStr(),
 		Type:        tc.packageType,
 		Constraints: tc.imageTag.TagStr(),
 	})

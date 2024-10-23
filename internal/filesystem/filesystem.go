@@ -19,11 +19,15 @@ import (
 	"bytes"
 	"io"
 	"io/fs"
+	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
 	"github.com/spf13/afero"
 )
+
+var ErrFsNotEmpty = errors.New("filesystem is not empty")
 
 // CopyFilesBetweenFs copies all files from the source filesystem (fromFS) to the destination filesystem (toFS).
 // It traverses through the fromFS filesystem, skipping directories and copying only files.
@@ -50,7 +54,7 @@ func CopyFilesBetweenFs(fromFS, toFS afero.Fs) error {
 		if err != nil {
 			return err
 		}
-		err = afero.WriteFile(toFS, path, fileData, info.Mode())
+		err = afero.WriteFile(toFS, path, fileData, 0644)
 		if err != nil {
 			return err
 		}
@@ -61,8 +65,7 @@ func CopyFilesBetweenFs(fromFS, toFS afero.Fs) error {
 	return err
 }
 
-func FSToTar(f afero.Fs, prefix string) ([]byte, error) {
-	// Copied from tar.AddFS but prepend the prefix.
+func FSToTar(f afero.Fs, prefix string, osBasePath *string) ([]byte, error) { // nolint:gocyclo
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
 	err := tw.WriteHeader(&tar.Header{
@@ -80,25 +83,79 @@ func FSToTar(f afero.Fs, prefix string) ([]byte, error) {
 		if info.IsDir() {
 			return nil
 		}
-		// TODO(#49580): Handle symlinks when fs.ReadLinkFS is available.
-		if !info.Mode().IsRegular() {
-			return errors.New("tar: cannot add non-regular file")
+
+		if info.Mode()&os.ModeSymlink != 0 {
+			// Handle symlink by using afero.OsFs to resolve it
+			osFs := afero.NewOsFs()
+			symlinkBasePath := filepath.Join(*osBasePath, name)
+
+			// Since symlink points outside BasePathFs, use osFs to resolve it
+			targetPath, err := filepath.EvalSymlinks(symlinkBasePath)
+			if err != nil {
+				return err
+			}
+
+			// Ensure the symlink target exists in the real filesystem (OsFs)
+			exists, err := afero.Exists(osFs, targetPath)
+			if err != nil || !exists {
+				return err
+			}
+
+			// Walk the external target path using OsFs
+			return afero.Walk(osFs, targetPath, func(symlinkedFile string, symlinkedInfo fs.FileInfo, err error) error {
+				if err != nil {
+					return err
+				}
+
+				if symlinkedInfo.IsDir() {
+					return nil
+				}
+
+				// Add files from the external symlinked target to the tar
+				targetHeader, err := tar.FileInfoHeader(symlinkedInfo, "")
+				if err != nil {
+					return err
+				}
+
+				// Adjust the header name to place it under the symlink's directory
+				relativePath, err := filepath.Rel(targetPath, symlinkedFile)
+				if err != nil {
+					return err
+				}
+				targetHeader.Name = filepath.Join(prefix, name, relativePath)
+
+				if err := tw.WriteHeader(targetHeader); err != nil {
+					return err
+				}
+
+				targetFile, err := osFs.Open(symlinkedFile)
+				if err != nil {
+					return err
+				}
+
+				_, err = io.Copy(tw, targetFile)
+				return err
+			})
 		}
-		h, err := tar.FileInfoHeader(info, "")
-		if err != nil {
+		if info.Mode().IsRegular() {
+			h, err := tar.FileInfoHeader(info, "")
+			if err != nil {
+				return err
+			}
+			h.Name = filepath.Join(prefix, name)
+			if err := tw.WriteHeader(h); err != nil {
+				return err
+			}
+
+			file, err := f.Open(name)
+			if err != nil {
+				return err
+			}
+
+			_, err = io.Copy(tw, file)
 			return err
 		}
-		h.Name = filepath.Join(prefix, name)
-		if err := tw.WriteHeader(h); err != nil {
-			return err
-		}
-		f, err := f.Open(name)
-		if err != nil {
-			return err
-		}
-		defer f.Close() //nolint:errcheck // Copied from upstream.
-		_, err = io.Copy(tw, f)
-		return err
+		return nil
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to populate tar archive")
@@ -109,4 +166,83 @@ func FSToTar(f afero.Fs, prefix string) ([]byte, error) {
 	}
 
 	return buf.Bytes(), nil
+}
+
+func CreateSymlink(targetFS *afero.BasePathFs, targetPath string, sourceFS *afero.BasePathFs, sourcePath string) error {
+	// Check if the source path exists in sourceFS
+	sourceExists, err := afero.Exists(sourceFS, sourcePath)
+	if err != nil {
+		return errors.Wrapf(err, "failed to check existence of source path: %s", sourcePath)
+	}
+	if !sourceExists {
+		return errors.Errorf("source directory does not exist: %s", sourcePath)
+	}
+
+	// Get the real path for targetPath inside targetFS
+	realTargetPath, err := targetFS.RealPath(targetPath)
+	if err != nil {
+		return errors.Wrapf(err, "failed to get real path for targetPath: %s", targetPath)
+	}
+
+	// Get the real path for sourcePath inside sourceFS
+	realSourcePath, err := sourceFS.RealPath(sourcePath)
+	if err != nil {
+		return errors.Wrapf(err, "failed to get real path for sourcePath: %s", sourcePath)
+	}
+
+	realBasePath := strings.TrimSuffix(realSourcePath, sourcePath)
+
+	// Calculate the relative path from the targetPath's parent directory to the sourcePath
+	symlinkParentDir := filepath.Dir(realTargetPath)
+	relativeSymlinkPath, err := filepath.Rel(symlinkParentDir, realSourcePath)
+	if err != nil {
+		return errors.Wrapf(err, "failed to calculate relative symlink path from %s to %s", symlinkParentDir, realSourcePath)
+	}
+
+	// Clean the paths to normalize them
+	relativeSymlinkPath = filepath.Clean(relativeSymlinkPath)
+	realBasePath = filepath.Clean(realBasePath)
+
+	resultRelativeSymlinkPath := relativeSymlinkPath
+	if strings.Contains(relativeSymlinkPath, realBasePath) {
+		resultRelativeSymlinkPath = strings.Replace(relativeSymlinkPath, realBasePath, "", 1)
+	}
+
+	// Join the real base path and target path to get the full symlink target path
+	symlinkPath := filepath.Join(realBasePath, realTargetPath)
+
+	// Check if the symlink or file already exists
+	if _, err := os.Lstat(symlinkPath); err == nil {
+		// If it exists, remove it
+		if err := os.Remove(symlinkPath); err != nil {
+			return errors.Wrapf(err, "failed to remove existing symlink or file at %s", symlinkPath)
+		}
+	}
+
+	// Use os.Symlink to create the symlink with the calculated relative path
+	if err := os.Symlink(resultRelativeSymlinkPath, symlinkPath); err != nil {
+		return errors.Wrapf(err, "failed to create symlink from %s to %s", resultRelativeSymlinkPath, symlinkPath)
+	}
+
+	return nil
+}
+
+// IsFsEmptycheck if the filesystem is empty
+func IsFsEmpty(fs afero.Fs) (bool, error) {
+	// Check if the root directory (".") exists
+	_, err := fs.Stat(".")
+	if err != nil {
+		if os.IsNotExist(err) {
+			// If the directory doesn't exist, consider it as empty
+			return true, nil
+		}
+		return false, err
+	}
+
+	isEmpty, err := afero.IsEmpty(fs, ".")
+	if err != nil {
+		return false, err
+	}
+
+	return isEmpty, nil
 }

@@ -33,7 +33,7 @@ func main() {
 	}
 }
 
-func realMain(pkg, outfile string) error {
+func realMain(pkg, outfile string) error { // nolint:gocyclo
 	pkgRef, err := name.ParseReference(pkg, name.WithDefaultRegistry("xpkg.upbound.io"))
 	if err != nil {
 		return errors.Wrap(err, "failed to parse package reference")
@@ -51,6 +51,28 @@ func realMain(pkg, outfile string) error {
 	newImg, err := mutate.AppendLayers(empty.Image, pkgLayer)
 	if err != nil {
 		return errors.Wrap(err, "failed to create test package image")
+	}
+
+	cfg, err := img.ConfigFile()
+	if err != nil {
+		return errors.Wrap(err, "failed to load cfg from image")
+	}
+
+	if cfg.Config.Labels == nil {
+		cfg.Config.Labels = map[string]string{}
+	}
+
+	imgLayerDigest, err := newImg.Digest()
+	if err != nil {
+		return errors.Wrap(err, "failed to load digest from image")
+	}
+
+	imgLabelKey := xpkg.Label(imgLayerDigest.String())
+	cfg.Config.Labels[imgLabelKey] = xpkg.PackageAnnotation
+
+	newImg, err = mutate.Config(newImg, cfg.Config)
+	if err != nil {
+		return errors.Wrap(err, "failed to mutate image")
 	}
 
 	w, err := os.Create(outfile) //nolint:gosec // Intentional user-provided output file.

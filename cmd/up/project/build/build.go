@@ -24,6 +24,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/alecthomas/kong"
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
 	"github.com/crossplane/crossplane-runtime/pkg/parser"
 	xpv1 "github.com/crossplane/crossplane/apis/apiextensions/v1"
@@ -39,9 +40,13 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/yaml"
 
+	"github.com/upbound/up/internal/project"
 	"github.com/upbound/up/internal/upterm"
 	"github.com/upbound/up/internal/version"
 	"github.com/upbound/up/internal/xpkg"
+	xcache "github.com/upbound/up/internal/xpkg/dep/cache"
+	"github.com/upbound/up/internal/xpkg/dep/manager"
+	"github.com/upbound/up/internal/xpkg/dep/resolver/image"
 	"github.com/upbound/up/internal/xpkg/functions"
 	"github.com/upbound/up/internal/xpkg/mutators"
 	"github.com/upbound/up/internal/xpkg/parser/examples"
@@ -49,6 +54,7 @@ import (
 	pyaml "github.com/upbound/up/internal/xpkg/parser/yaml"
 	"github.com/upbound/up/internal/xpkg/schemagenerator"
 	"github.com/upbound/up/internal/xpkg/schemarunner"
+	"github.com/upbound/up/internal/xpkg/workspace"
 
 	"github.com/upbound/up/pkg/apis/project/v1alpha1"
 )
@@ -66,14 +72,22 @@ type Cmd struct {
 	NoBuildCache   bool   `help:"Don't cache image layers while building." default:"false"`
 	BuildCacheDir  string `help:"Path to the build cache directory." type:"path" default:"~/.up/build-cache"`
 	MaxConcurrency uint   `help:"Maximum number of functions to build at once." env:"UP_MAX_CONCURRENCY" default:"8"`
+	CacheDir       string `short:"d" help:"Directory used for caching dependencies." default:"~/.up/cache/" env:"CACHE_DIR" type:"path"`
 
-	projFS             afero.Fs
-	outputFS           afero.Fs
+	modelsFS afero.Fs
+	outputFS afero.Fs
+	projFS   afero.Fs
+
 	functionIdentifier functions.Identifier
 	schemaRunner       schemarunner.SchemaRunner
+
+	m  *manager.Manager
+	ws *workspace.Workspace
 }
 
-func (c *Cmd) AfterApply() error {
+func (c *Cmd) AfterApply(kongCtx *kong.Context, p pterm.TextPrinter) error {
+	kongCtx.Bind(pterm.DefaultBulletList.WithWriter(kongCtx.Stdout))
+	ctx := context.Background()
 	// Read the project file.
 	projFilePath, err := filepath.Abs(c.ProjectFile)
 	if err != nil {
@@ -84,13 +98,53 @@ func (c *Cmd) AfterApply() error {
 	// Construct a virtual filesystem that contains only the project. We'll do
 	// all our operations inside this virtual FS.
 	c.projFS = afero.NewBasePathFs(afero.NewOsFs(), projDirPath)
+	c.modelsFS = afero.NewBasePathFs(afero.NewOsFs(), filepath.Join(projDirPath, ".up"))
 
 	// Output can be anywhere, doesn't have to be in the project directory.
 	c.outputFS = afero.NewOsFs()
+	fs := afero.NewOsFs()
+
+	cache, err := xcache.NewLocal(c.CacheDir, xcache.WithFS(fs))
+	if err != nil {
+		return err
+	}
+
+	r := image.NewResolver()
+
+	m, err := manager.New(
+		manager.WithCacheModels(c.modelsFS),
+		manager.WithCache(cache),
+		manager.WithResolver(r),
+	)
+
+	if err != nil {
+		return err
+	}
+
+	c.m = m
+
+	ws, err := workspace.New("/",
+		workspace.WithFS(c.projFS),
+		workspace.WithPrinter(p),
+		workspace.WithPermissiveParser(),
+	)
+	if err != nil {
+		return err
+	}
+	c.ws = ws
+
+	if err := ws.Parse(ctx); err != nil {
+		return err
+	}
+
+	// workaround interfaces not being bindable ref: https://github.com/alecthomas/kong/issues/48
+	kongCtx.BindTo(ctx, (*context.Context)(nil))
 
 	c.functionIdentifier = functions.DefaultIdentifier
 	c.schemaRunner = schemarunner.RealSchemaRunner{}
 
+	// workaround interfaces not being bindable ref: https://github.com/alecthomas/kong/issues/48
+	kongCtx.BindTo(ctx, (*context.Context)(nil))
 	return nil
 }
 
@@ -102,11 +156,27 @@ func (c *Cmd) Run(ctx context.Context, p pterm.TextPrinter) error { //nolint:goc
 		c.MaxConcurrency = 1
 	}
 
-	project, paths, err := c.parseProject()
+	project, paths, err := project.Parse(c.projFS, c.ProjectFile, c.Repository)
 	if err != nil {
 		return err
 	}
 
+	err = upterm.WrapWithSuccessSpinner("Checking dependencies", upterm.CheckmarkSuccessSpinner, func() error {
+		deps, _ := c.ws.View().Meta().DependsOn()
+
+		// Check all dependencies in the cache
+		for _, dep := range deps {
+			_, _, err := c.m.AddAll(ctx, dep)
+			if err != nil {
+				return errors.Wrapf(err, "failed to check dependencies for %v", dep)
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
+		return err
+	}
 	// Scaffold a configuration based on the metadata in the project. Later
 	// we'll add any embedded functions we build to the dependencies.
 	cfg := &xpmetav1.Configuration{
@@ -294,50 +364,6 @@ func (c *Cmd) Run(ctx context.Context, p pterm.TextPrinter) error { //nolint:goc
 	return nil
 }
 
-// parseProject parses the project file, returning the parsed Project resource
-// and the absolute paths to various parts of the project in the project
-// filesystem.
-func (c *Cmd) parseProject() (*v1alpha1.Project, *v1alpha1.ProjectPaths, error) {
-	// Parse and validate the project file.
-	projYAML, err := afero.ReadFile(c.projFS, filepath.Join("/", filepath.Base(c.ProjectFile)))
-	if err != nil {
-		return nil, nil, errors.Wrapf(err, "failed to read project file %q", c.ProjectFile)
-	}
-	var project v1alpha1.Project
-	err = yaml.Unmarshal(projYAML, &project)
-	if err != nil {
-		return nil, nil, errors.Wrap(err, "failed to parse project file")
-	}
-	if err := project.Validate(); err != nil {
-		return nil, nil, errors.Wrap(err, "invalid project file")
-	}
-
-	if c.Repository != "" {
-		project.Spec.Repository = c.Repository
-	}
-
-	// Construct absolute versions of the other configured paths for use within
-	// the virtual FS.
-	paths := &v1alpha1.ProjectPaths{
-		APIs:      "/",
-		Examples:  "/examples",
-		Functions: "/functions",
-	}
-	if project.Spec.Paths != nil {
-		if project.Spec.Paths.APIs != "" {
-			paths.APIs = filepath.Clean(filepath.Join("/", project.Spec.Paths.APIs))
-		}
-		if project.Spec.Paths.Examples != "" {
-			paths.Examples = filepath.Clean(filepath.Join("/", project.Spec.Paths.Examples))
-		}
-		if project.Spec.Paths.Functions != "" {
-			paths.Functions = filepath.Clean(filepath.Join("/", project.Spec.Paths.Functions))
-		}
-	}
-
-	return &project, paths, nil
-}
-
 type imageTagMap map[name.Tag]v1.Image
 
 // buildFunctions builds the embedded functions found in directories at the top
@@ -424,13 +450,13 @@ func (c *Cmd) buildFunctions(ctx context.Context, fromFS afero.Fs, project *v1al
 // buildFunction builds images for a single function whose source resides in the
 // given filesystem. One image will be returned for each architecture specified
 // in the project.
-func (c *Cmd) buildFunction(ctx context.Context, fromFS afero.Fs, project *v1alpha1.Project, fnName string) ([]v1.Image, error) {
+func (c *Cmd) buildFunction(ctx context.Context, fromFS afero.Fs, p *v1alpha1.Project, fnName string) ([]v1.Image, error) { // nolint:gocyclo
 	fn := &xpmetav1.Function{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: xpmetav1.SchemeGroupVersion.String(),
 			Kind:       xpmetav1.FunctionKind,
 		},
-		ObjectMeta: fnMetaFromProject(project, fnName),
+		ObjectMeta: fnMetaFromProject(p, fnName),
 	}
 	metaFS := afero.NewMemMapFs()
 	y, err := yaml.Marshal(fn)
@@ -477,7 +503,24 @@ func (c *Cmd) buildFunction(ctx context.Context, fromFS afero.Fs, project *v1alp
 		return nil, errors.Wrap(err, "failed to find a builder")
 	}
 
-	runtimeImages, err := fnBuilder.Build(ctx, fromFS, project.Spec.Architectures)
+	_, paths, err := project.Parse(c.projFS, c.ProjectFile, c.Repository)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get function path")
+	}
+
+	basePath, err := c.projFS.(*afero.BasePathFs).RealPath(".")
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get basePath from project")
+	}
+
+	fnxBasePath, err := fromFS.(*afero.BasePathFs).RealPath(".")
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get basePath from function")
+	}
+
+	osBasePath := filepath.Join(basePath, paths.Functions, fnxBasePath)
+
+	runtimeImages, err := fnBuilder.Build(ctx, fromFS, p.Spec.Architectures, &osBasePath)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to build runtime images")
 	}

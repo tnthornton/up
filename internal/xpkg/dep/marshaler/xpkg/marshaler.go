@@ -22,7 +22,7 @@ import (
 	"strings"
 
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
-	"github.com/google/go-containerregistry/pkg/v1/mutate"
+	cv1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/spf13/afero"
 	"github.com/spf13/afero/tarfs"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -36,6 +36,7 @@ import (
 	"github.com/crossplane/crossplane/apis/pkg/v1beta1"
 	"github.com/crossplane/crossplane/xcrd"
 
+	"github.com/upbound/up/internal/filesystem"
 	"github.com/upbound/up/internal/xpkg"
 	"github.com/upbound/up/internal/xpkg/parser/linter"
 	"github.com/upbound/up/internal/xpkg/parser/ndjson"
@@ -51,6 +52,7 @@ const (
 	errFailedToConvertMetaToPackage = "failed to convert meta to package"
 	errInvalidPath                  = "invalid path provided for package lookup"
 	errNotExactlyOneMeta            = "not exactly one package meta type"
+	maxFileSize                     = 1024 * 1024 * 1024
 )
 
 var (
@@ -107,8 +109,48 @@ func WithJSONParser(p JSONPackageParser) MarshalerOption {
 
 // FromImage takes a xpkg.Image and returns a ParsedPackage for consumption by
 // upstream callers.
-func (r *Marshaler) FromImage(i xpkg.Image) (*ParsedPackage, error) {
-	reader := mutate.Extract(i.Image)
+func (r *Marshaler) FromImage(i xpkg.Image) (*ParsedPackage, error) { // nolint:gocyclo
+	manifest, err := i.Image.Manifest()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get image manifest")
+	}
+
+	var packageLayerDigest cv1.Hash
+	var schemaFS = make(map[string]afero.Fs)
+
+	for _, l := range manifest.Layers {
+		if val, ok := l.Annotations[xpkg.AnnotationKey]; ok && val == xpkg.PackageAnnotation {
+			packageLayerDigest = l.Digest
+		}
+
+		// Dynamically detect schema annotations (e.g., schema.python, schema.kcl, etc.)
+		for _, annotationValue := range l.Annotations {
+			if strings.HasPrefix(annotationValue, "schema.") {
+				schemaType := strings.TrimPrefix(annotationValue, "schema.")
+				schemaMemFs := afero.NewMemMapFs()
+				err := extractLayerToFs(i, l.Digest, schemaMemFs)
+				if err != nil {
+					return nil, errors.Wrapf(err, "failed to extract %s schema layer", schemaType)
+				}
+				schemaFS[schemaType] = schemaMemFs
+			}
+		}
+	}
+
+	if packageLayerDigest.String() == "" {
+		return nil, errors.New("package layer with specified annotation not found")
+	}
+
+	packageLayer, err := i.Image.LayerByDigest(packageLayerDigest)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to find the package layer")
+	}
+
+	reader, err := packageLayer.Uncompressed()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to extract package layer")
+	}
+
 	fs := tarfs.New(tar.NewReader(reader))
 	pkgYaml, err := fs.Open(xpkg.StreamFile)
 	if err != nil {
@@ -126,6 +168,7 @@ func (r *Marshaler) FromImage(i xpkg.Image) (*ParsedPackage, error) {
 		return nil, errors.Wrap(err, errConvertXRDs)
 	}
 
+	pkg.Schema = schemaFS
 	return finalizePkg(pkg)
 }
 
@@ -147,6 +190,14 @@ func (r *Marshaler) FromDir(fs afero.Fs, path string) (*ParsedPackage, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// Find all schema.* directories and save in aferoFS
+	schemaFS, err := r.loadSchemasFromDir(fs, path)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to load schema directories")
+	}
+
+	pkg.Schema = schemaFS
 
 	return finalizePkg(pkg)
 }
@@ -308,4 +359,108 @@ func convertToV1beta1(in xpmetav1.Dependency) v1beta1.Dependency {
 	}
 
 	return betaD
+}
+
+func extractLayerToFs(i xpkg.Image, layerDigest cv1.Hash, fs afero.Fs) error { // nolint:gocyclo
+	layers, err := i.Image.Layers()
+	if err != nil {
+		return errors.Wrap(err, "failed to get image layers")
+	}
+
+	var targetLayer cv1.Layer
+	for _, l := range layers {
+		h, err := l.Digest()
+		if err != nil {
+			return errors.Wrap(err, "failed to get layer digest")
+		}
+
+		if h == layerDigest {
+			targetLayer = l
+			break
+		}
+	}
+
+	if targetLayer == nil {
+		return errors.New("failed to find the target layer")
+	}
+
+	reader, err := targetLayer.Uncompressed()
+	if err != nil {
+		return errors.Wrap(err, "failed to extract target layer")
+	}
+
+	tarReader := tar.NewReader(reader)
+
+	// Iterate over the files in the tarball and write them to the Afero filesystem
+	for {
+		header, err := tarReader.Next()
+		if err == io.EOF {
+			break // End of archive
+		}
+		if err != nil {
+			return errors.Wrap(err, "failed to read tar header")
+		}
+
+		// Construct the full output path for the file in the Afero filesystem
+		outputPath := header.Name
+
+		switch header.Typeflag {
+		case tar.TypeDir:
+			// Create directories in the Afero filesystem
+			if err := fs.MkdirAll(outputPath, 0755); err != nil {
+				return errors.Wrap(err, "failed to create directory in afero fs")
+			}
+		case tar.TypeReg:
+			// Create regular files in the Afero filesystem
+			outFile, err := fs.Create(outputPath)
+			if err != nil {
+				return errors.Wrap(err, "failed to create file in afero fs")
+			}
+			defer func() {}()
+
+			// Limit the number of bytes copied from the tarReader to prevent decompression bombs
+			limitedReader := io.LimitReader(tarReader, maxFileSize)
+
+			// Copy the contents of the tar file to the newly created file with size limit
+			if _, err := io.Copy(outFile, limitedReader); err != nil {
+				return errors.Wrap(err, "failed to write file in afero fs or exceeded file size limit")
+			}
+
+		}
+	}
+
+	return nil
+}
+
+func (r *Marshaler) loadSchemasFromDir(fs afero.Fs, path string) (map[string]afero.Fs, error) {
+	schemaFS := make(map[string]afero.Fs)
+
+	// Read the contents of the directory
+	dirEntries, err := afero.ReadDir(fs, path)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to read directory")
+	}
+
+	// Iterate through the directory contents to find schema.* folders
+	for _, entry := range dirEntries {
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), "schema.") {
+			// Extract the schema type (e.g., "python" from "schema.python")
+			schemaType := strings.TrimPrefix(entry.Name(), "schema.")
+
+			// Create an in-memory filesystem for this schema
+			schemaMemFS := afero.NewMemMapFs()
+			sourceFS := afero.NewBasePathFs(fs, filepath.Join(path, entry.Name()))
+
+			// Read the contents of the schema directory and copy to memFS
+			err := filesystem.CopyFilesBetweenFs(sourceFS, schemaMemFS)
+			if err != nil {
+				return nil, errors.Wrapf(err, "failed to copy schema directory %s", entry.Name())
+			}
+
+			// Add the memFS to the schemaFS map
+			schemaFS[schemaType] = schemaMemFS
+		}
+	}
+
+	return schemaFS, nil
 }

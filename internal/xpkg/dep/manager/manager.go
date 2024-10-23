@@ -31,6 +31,7 @@ import (
 	"github.com/crossplane/crossplane-runtime/pkg/logging"
 	"github.com/crossplane/crossplane/apis/pkg/v1beta1"
 
+	"github.com/upbound/up/internal/filesystem"
 	ixpkg "github.com/upbound/up/internal/xpkg"
 	"github.com/upbound/up/internal/xpkg/dep/cache"
 	xpkg "github.com/upbound/up/internal/xpkg/dep/marshaler/xpkg"
@@ -56,7 +57,8 @@ type Manager struct {
 	cacheRoot     string
 	watchInterval *time.Duration
 
-	acc []*xpkg.ParsedPackage
+	acc         []*xpkg.ParsedPackage
+	cacheModels *afero.Fs
 }
 
 // Cache defines the API contract for working with a Cache.
@@ -137,6 +139,13 @@ type Option func(*Manager)
 func WithCache(c Cache) Option {
 	return func(m *Manager) {
 		m.c = c
+	}
+}
+
+// WithCacheModels sets the base path for cacheModels in the Manager.
+func WithCacheModels(fs afero.Fs) Option {
+	return func(m *Manager) {
+		m.cacheModels = &fs
 	}
 }
 
@@ -233,6 +242,22 @@ func (m *Manager) AddAll(ctx context.Context, d v1beta1.Dependency) (v1beta1.Dep
 	// currently assumes we have something from
 	if err := m.addAllDeps(ctx, e); err != nil {
 		return ud, m.acc, err
+	}
+
+	// add all models to models locations
+	if m.cacheModels != nil {
+		for _, pp := range m.acc {
+			for language, schemaFS := range pp.Schema {
+				// Create a new BasePathFs rooted at the new language folder
+				langFs := afero.NewBasePathFs(*m.cacheModels, language)
+
+				// Copy files from schemaFS to the language folder in cacheModels
+				err = filesystem.CopyFilesBetweenFs(schemaFS, langFs)
+				if err != nil {
+					return ud, m.acc, err
+				}
+			}
+		}
 	}
 
 	ud.Type = e.Type()

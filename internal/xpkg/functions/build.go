@@ -95,7 +95,7 @@ type Builder interface {
 	// Build builds the function whose source lives in the given filesystem,
 	// returning an image for each architecture. This image will *not* include
 	// package metadata; it's just the runtime image for the function.
-	Build(ctx context.Context, fromFS afero.Fs, architectures []string) ([]v1.Image, error)
+	Build(ctx context.Context, fromFS afero.Fs, architectures []string, osBasePath *string) ([]v1.Image, error)
 
 	// match returns true if this builder can build the function whose source
 	// lives in the given filesystem.
@@ -114,14 +114,14 @@ func (b *dockerBuilder) match(fromFS afero.Fs) (bool, error) {
 	return afero.Exists(fromFS, "Dockerfile")
 }
 
-func (b *dockerBuilder) Build(ctx context.Context, fromFS afero.Fs, architectures []string) ([]v1.Image, error) {
+func (b *dockerBuilder) Build(ctx context.Context, fromFS afero.Fs, architectures []string, osBasePath *string) ([]v1.Image, error) {
 	cl, err := client.NewClientWithOpts(client.WithAPIVersionNegotiation())
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to connect to docker daemon")
 	}
 
 	// Collect build context to send to the docker daemon.
-	contextTar, err := filesystem.FSToTar(fromFS, "/")
+	contextTar, err := filesystem.FSToTar(fromFS, "/", nil)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to construct docker context")
 	}
@@ -178,7 +178,7 @@ func (b *kclBuilder) match(fromFS afero.Fs) (bool, error) {
 	return afero.Exists(fromFS, "kcl.mod")
 }
 
-func (b *kclBuilder) Build(ctx context.Context, fromFS afero.Fs, architectures []string) ([]v1.Image, error) {
+func (b *kclBuilder) Build(ctx context.Context, fromFS afero.Fs, architectures []string, osBasePath *string) ([]v1.Image, error) {
 	baseRef, err := name.NewTag(b.baseImage)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to parse KCL base image tag")
@@ -193,7 +193,7 @@ func (b *kclBuilder) Build(ctx context.Context, fromFS afero.Fs, architectures [
 				return errors.Wrap(err, "failed to fetch KCL base image")
 			}
 
-			src, err := filesystem.FSToTar(fromFS, "/src")
+			src, err := filesystem.FSToTar(fromFS, "/src", osBasePath)
 			if err != nil {
 				return errors.Wrap(err, "failed to tar layer contents")
 			}
@@ -323,7 +323,7 @@ func (b *fakeBuilder) match(fromFS afero.Fs) (bool, error) {
 	return true, nil
 }
 
-func (b *fakeBuilder) Build(ctx context.Context, fromFS afero.Fs, architectures []string) ([]v1.Image, error) {
+func (b *fakeBuilder) Build(ctx context.Context, fromFS afero.Fs, architectures []string, osBasePath *string) ([]v1.Image, error) {
 	images := make([]v1.Image, len(architectures))
 	for i, arch := range architectures {
 		baseImg := empty.Image

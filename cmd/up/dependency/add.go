@@ -17,6 +17,7 @@ package dependency
 import (
 	"context"
 	"os"
+	"path/filepath"
 
 	"github.com/alecthomas/kong"
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
@@ -33,10 +34,12 @@ import (
 
 // addCmd manages crossplane dependencies.
 type addCmd struct {
-	m  *manager.Manager
-	ws *workspace.Workspace
+	m        *manager.Manager
+	ws       *workspace.Workspace
+	modelsFS afero.Fs
 
-	Package string `arg:"" help:"Package to be added."`
+	Package     string `arg:"" help:"Package to be added."`
+	ProjectFile string `short:"f" help:"Path to project definition file." default:"upbound.yaml"`
 
 	// TODO(@tnthornton) remove cacheDir flag. Having a user supplied flag
 	// can result in broken behavior between xpls and dep. CacheDir should
@@ -49,6 +52,16 @@ type addCmd struct {
 func (c *addCmd) AfterApply(kongCtx *kong.Context, p pterm.TextPrinter) error {
 	kongCtx.Bind(pterm.DefaultBulletList.WithWriter(kongCtx.Stdout))
 	ctx := context.Background()
+
+	// Read the project file.
+	projFilePath, err := filepath.Abs(c.ProjectFile)
+	if err != nil {
+		return err
+	}
+	// The location of the project file defines the root of the project.
+	projDirPath := filepath.Dir(projFilePath)
+	c.modelsFS = afero.NewBasePathFs(afero.NewOsFs(), filepath.Join(projDirPath, ".up"))
+
 	fs := afero.NewOsFs()
 
 	cache, err := cache.NewLocal(c.CacheDir, cache.WithFS(fs))
@@ -59,6 +72,7 @@ func (c *addCmd) AfterApply(kongCtx *kong.Context, p pterm.TextPrinter) error {
 	r := image.NewResolver()
 
 	m, err := manager.New(
+		manager.WithCacheModels(c.modelsFS),
 		manager.WithCache(cache),
 		manager.WithResolver(r),
 	)
@@ -106,7 +120,7 @@ func (c *addCmd) Run(ctx context.Context, p pterm.TextPrinter, pb *pterm.BulletL
 	if err != nil {
 		return errors.Wrapf(err, "in %s", c.Package)
 	}
-	p.Printfln("%s:%s added to xpkg cache", ud.Package, ud.Constraints)
+	p.Printfln("%s:%s added to cache", ud.Package, ud.Constraints)
 
 	meta := c.ws.View().Meta()
 

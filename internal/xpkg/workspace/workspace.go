@@ -524,8 +524,6 @@ func (v *View) parseProject(pCtx parseContext) error {
 	v.meta = meta.New(&proj)
 	v.metaPath = pCtx.path
 
-	v.printer.Printf("xpkg loaded project meta information from %s\n", v.relativePath(pCtx.path))
-
 	return nil
 }
 

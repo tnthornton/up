@@ -27,6 +27,7 @@ import (
 	xpmetav1 "github.com/crossplane/crossplane/apis/pkg/meta/v1"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
 	"github.com/pterm/pterm"
 	"github.com/spf13/afero"
@@ -39,16 +40,25 @@ import (
 
 	"github.com/upbound/up/internal/version"
 	"github.com/upbound/up/internal/xpkg"
+	"github.com/upbound/up/internal/xpkg/dep/cache"
+	"github.com/upbound/up/internal/xpkg/dep/manager"
 	xpkgmarshaler "github.com/upbound/up/internal/xpkg/dep/marshaler/xpkg"
+	"github.com/upbound/up/internal/xpkg/dep/resolver/image"
 	"github.com/upbound/up/internal/xpkg/functions"
+	"github.com/upbound/up/internal/xpkg/workspace"
 	"github.com/upbound/up/pkg/apis/project/v1alpha1"
 )
 
-//go:embed testdata/configuration-getting-started/**
-var configurationGettingStarted embed.FS
+var (
+	//go:embed testdata/configuration-getting-started/**
+	configurationGettingStarted embed.FS
 
-//go:embed testdata/project-embedded-functions/**
-var projectEmbeddedFunctions embed.FS
+	//go:embed testdata/project-embedded-functions/**
+	projectEmbeddedFunctions embed.FS
+
+	//go:embed testdata/packages/*
+	packagesFS embed.FS
+)
 
 func TestBuild(t *testing.T) {
 	tcs := map[string]struct {
@@ -158,6 +168,38 @@ func TestBuild(t *testing.T) {
 			outFS := afero.NewMemMapFs()
 			mockRunner := MockSchemaRunner{}
 
+			ws, err := workspace.New("/", workspace.WithFS(outFS), workspace.WithPermissiveParser())
+			assert.NilError(t, err)
+			err = ws.Parse(context.Background())
+			assert.NilError(t, err)
+
+			cch, err := cache.NewLocal("/cache", cache.WithFS(outFS))
+			assert.NilError(t, err)
+
+			// Create mock fetcher that holds the images
+			testPkgFS := afero.NewBasePathFs(afero.FromIOFS{FS: packagesFS}, "testdata/packages")
+
+			r := image.NewResolver(
+				image.WithFetcher(
+					&image.FSFetcher{FS: testPkgFS},
+				),
+			)
+
+			mgr, err := manager.New(
+				manager.WithCache(cch),
+				manager.WithResolver(r),
+			)
+			assert.NilError(t, err)
+
+			// Construct a workspace from the test filesystem.
+			ws, err = workspace.New("/",
+				workspace.WithFS(tc.projFS),
+				workspace.WithPermissiveParser(),
+			)
+			assert.NilError(t, err)
+			err = ws.Parse(context.Background())
+			assert.NilError(t, err)
+
 			c := &Cmd{
 				ProjectFile:  "upbound.yaml",
 				OutputDir:    "_output",
@@ -167,6 +209,9 @@ func TestBuild(t *testing.T) {
 				outputFS:           outFS,
 				functionIdentifier: functions.FakeIdentifier,
 				schemaRunner:       mockRunner,
+
+				m:  mgr,
+				ws: ws,
 			}
 
 			// Parse the upbound.yaml from the example so we can validate that certain
@@ -200,6 +245,12 @@ func TestBuild(t *testing.T) {
 			for _, desc := range mfst {
 				if slices.Contains(desc.RepoTags, cfgTag.String()) {
 					cfgImage, err = tarball.Image(opener, &cfgTag)
+					assert.NilError(t, err)
+
+					configFile, err := cfgImage.ConfigFile()
+					assert.NilError(t, err)
+
+					cfgImage, err = mutate.Config(cfgImage, configFile.Config)
 					assert.NilError(t, err)
 
 					cfgImage, err = xpkg.AnnotateImage(cfgImage)
@@ -244,8 +295,21 @@ func TestBuild(t *testing.T) {
 				} else {
 					fnTag, err := name.NewTag(desc.RepoTags[0])
 					assert.NilError(t, err)
+
 					fnImage, err := tarball.Image(opener, &fnTag)
 					assert.NilError(t, err)
+
+					configFile, err := fnImage.ConfigFile()
+					assert.NilError(t, err)
+
+					fnImage, err = mutate.Config(fnImage, configFile.Config)
+					assert.NilError(t, err)
+
+					fnImage, err = xpkg.AnnotateImage(fnImage)
+					if err != nil {
+						t.Fatalf("Failed to annotate image: %v", err)
+					}
+
 					fnImages[fnTag.Repository] = append(fnImages[fnTag.Repository], fnImage)
 				}
 			}

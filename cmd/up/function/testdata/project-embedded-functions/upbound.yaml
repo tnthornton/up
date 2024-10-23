@@ -1,0 +1,28 @@
+# Copyright 2024 Upbound Inc
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+apiVersion: meta.dev.upbound.io/v1alpha1
+kind: Project
+metadata:
+  name: project-embedded-functions
+spec:
+  maintainer: Upbound <support@upbound.io>
+  source: github.com/upbound/project-getting-started
+  license: Apache-2.0
+  repository: xpkg.upbound.io/awg/getting-started
+  dependsOn:
+    - provider: docker.io/haarchri/provider-azure-compute
+      version: "v1.7.15"
+    - function: xpkg.upbound.io/crossplane-contrib/function-auto-ready
+      version: "v0.2.1"

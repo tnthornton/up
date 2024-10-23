@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/alecthomas/kong"
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
@@ -37,10 +38,12 @@ const (
 
 // updateCacheCmd updates the cache.
 type updateCacheCmd struct {
-	c  *cache.Local
-	m  *manager.Manager
-	ws *workspace.Workspace
+	c        *cache.Local
+	m        *manager.Manager
+	ws       *workspace.Workspace
+	modelsFS afero.Fs
 
+	ProjectFile string `short:"f" help:"Path to project definition file." default:"upbound.yaml"`
 	// TODO(@tnthornton) remove cacheDir flag. Having a user supplied flag
 	// can result in broken behavior between xpls and dep. CacheDir should
 	// only be supplied by the Config.
@@ -50,6 +53,16 @@ type updateCacheCmd struct {
 func (c *updateCacheCmd) AfterApply(kongCtx *kong.Context, p pterm.TextPrinter) error {
 	kongCtx.Bind(pterm.DefaultBulletList.WithWriter(kongCtx.Stdout))
 	ctx := context.Background()
+
+	// Read the project file.
+	projFilePath, err := filepath.Abs(c.ProjectFile)
+	if err != nil {
+		return err
+	}
+	// The location of the project file defines the root of the project.
+	projDirPath := filepath.Dir(projFilePath)
+	c.modelsFS = afero.NewBasePathFs(afero.NewOsFs(), filepath.Join(projDirPath, ".up"))
+
 	fs := afero.NewOsFs()
 
 	cache, err := cache.NewLocal(c.CacheDir, cache.WithFS(fs))
@@ -62,6 +75,7 @@ func (c *updateCacheCmd) AfterApply(kongCtx *kong.Context, p pterm.TextPrinter) 
 	r := image.NewResolver()
 
 	m, err := manager.New(
+		manager.WithCacheModels(c.modelsFS),
 		manager.WithCache(cache),
 		manager.WithResolver(r),
 	)
@@ -121,7 +135,7 @@ func (c *updateCacheCmd) Run(ctx context.Context, p pterm.TextPrinter, pb *pterm
 		p.Printfln("No dependencies specified")
 		return nil
 	}
-	p.Printfln("Dependencies added to xpkg cache:")
+	p.Printfln("Dependencies added to cache:")
 	li := make([]pterm.BulletListItem, len(resolvedDeps))
 	for i, d := range resolvedDeps {
 		li[i] = pterm.BulletListItem{

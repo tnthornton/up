@@ -518,7 +518,16 @@ func newPackageImage(objs ...runtime.Object) v1.Image {
 		// ingest packImg in multiple tests below.
 		return io.NopCloser(bytes.NewReader(wbuf.Bytes())), nil
 	})
+	packLayerDigest, _ := packLayer.Digest()
 	packImg, _ := mutate.AppendLayers(empty.Image, packLayer)
 
+	cfg, _ := packImg.ConfigFile()
+	if cfg.Config.Labels == nil {
+		cfg.Config.Labels = map[string]string{}
+	}
+	labelKey := xpkg.Label(packLayerDigest.String())
+	cfg.Config.Labels[labelKey] = xpkg.PackageAnnotation
+	packImg, _ = mutate.Config(packImg, cfg.Config)
+	packImg, _ = xpkg.AnnotateImage(packImg)
 	return packImg
 }

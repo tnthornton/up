@@ -20,10 +20,13 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/crossplane/crossplane-runtime/pkg/errors"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
 	"github.com/spf13/afero"
+
+	"github.com/upbound/up/internal/xpkg"
 )
 
 // FSFetcher is an image fetcher that returns packages stored in a
@@ -39,9 +42,21 @@ type FSFetcher struct {
 func (m *FSFetcher) Fetch(ctx context.Context, ref name.Reference, secrets ...string) (v1.Image, error) {
 	fname := filepath.Join(ref.Context().String(), ref.Identifier()) + ".xpkg"
 
-	return tarball.Image(func() (io.ReadCloser, error) {
+	// Open the file from the filesystem
+	img, err := tarball.Image(func() (io.ReadCloser, error) {
 		return m.FS.Open(fname)
 	}, nil)
+
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to load image from tarball")
+	}
+
+	img, err = xpkg.AnnotateImage(img)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to annotate image")
+	}
+
+	return img, nil
 }
 
 // Head returns the configured error.

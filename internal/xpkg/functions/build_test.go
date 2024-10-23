@@ -137,7 +137,7 @@ func TestKCLBuild(t *testing.T) {
 		afero.FromIOFS{FS: kclFunction},
 		"testdata/kcl-function",
 	)
-	fnImgs, err := b.Build(context.Background(), fromFS, []string{"amd64"})
+	fnImgs, err := b.Build(context.Background(), fromFS, []string{"amd64"}, nil)
 	assert.NilError(t, err)
 	assert.Assert(t, cmp.Len(fnImgs, 1))
 	fnImg := fnImgs[0]

@@ -21,6 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 
 	"github.com/crossplane/crossplane/apis/pkg/v1beta1"
+	"github.com/spf13/afero"
 
 	"github.com/upbound/up/internal/xpkg/parser/ndjson"
 )
@@ -50,7 +51,9 @@ type ParsedPackage struct {
 	// The SHA corresponding to the package.
 	SHA string
 	// The resolved version, e.g. v0.20.0
-	Ver string
+	Ver    string
+	Schema map[string]afero.Fs // Optional schema field, can be nil
+
 }
 
 // Digest returns the package's digest derived from the package image.
@@ -94,4 +97,9 @@ func (p *ParsedPackage) Registry() string {
 // e.g. v0.20.0
 func (p *ParsedPackage) Version() string {
 	return p.Ver
+}
+
+// Schemas returns the package's schemas derived from the package image.
+func (p *ParsedPackage) Schemas() map[string]afero.Fs {
+	return p.Schema
 }

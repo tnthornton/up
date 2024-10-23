@@ -78,7 +78,7 @@ func TestFromImage(t *testing.T) {
 						Registry: "index.docker.io",
 						Repo:     "crossplane/provider-aws",
 						Version:  "v0.20.0",
-						Digest:   "sha256:e705d37caf84ca874800fa0d838804b83759e1acff9dec1c61e20178695f3206",
+						Digest:   "sha256:03d3217f3b69432a9d3313d318c1ab6980fff5245134615dd8e32357ce3851c9",
 					},
 					Image: newPackageImage(testProviderPkgYaml),
 				},
@@ -130,7 +130,7 @@ func TestFromImage(t *testing.T) {
 				},
 			},
 			want: want{
-				err: errors.Wrap(errors.New("open package.yaml: no such file or directory"), errOpenPackageStream),
+				err: errors.Wrapf(errors.New("unknown blob :"), "failed to find the package layer"),
 			},
 		},
 	}
@@ -429,8 +429,18 @@ func newPackageImage(path string) v1.Image {
 		// ingest packImg in multiple tests below.
 		return io.NopCloser(bytes.NewReader(buf.Bytes())), nil
 	})
+
+	packLayerDigest, _ := packLayer.Digest()
 	packImg, _ := mutate.AppendLayers(empty.Image, packLayer)
 
+	cfg, _ := packImg.ConfigFile()
+	if cfg.Config.Labels == nil {
+		cfg.Config.Labels = map[string]string{}
+	}
+	labelKey := xpkg.Label(packLayerDigest.String())
+	cfg.Config.Labels[labelKey] = xpkg.PackageAnnotation
+	packImg, _ = mutate.Config(packImg, cfg.Config)
+	packImg, _ = xpkg.AnnotateImage(packImg)
 	return packImg
 }
 
