@@ -17,6 +17,7 @@ package build
 import (
 	"context"
 	"fmt"
+	"io"
 	"path/filepath"
 	"reflect"
 
@@ -101,7 +102,8 @@ func (c *Cmd) AfterApply(kongCtx *kong.Context, p pterm.TextPrinter) error {
 
 	ws, err := workspace.New("/",
 		workspace.WithFS(c.projFS),
-		workspace.WithPrinter(p),
+		// The user doesn't care about workspace warnings during build.
+		workspace.WithPrinter(&pterm.BasicTextPrinter{Writer: io.Discard}),
 		workspace.WithPermissiveParser(),
 	)
 	if err != nil {
