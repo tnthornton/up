@@ -18,7 +18,6 @@ import (
 	"context"
 	"io/fs"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
@@ -35,6 +34,7 @@ import (
 const (
 	kclSchemaFolder = "schemas"
 	kclModelsFolder = "models"
+	kclImage        = "kcllang/kcl:v0.10.6"
 )
 
 // GenerateSchemaKcl generates KCL schema files from the XRDs and CRDs fromFS
@@ -115,16 +115,11 @@ func GenerateSchemaKcl(ctx context.Context, fromFS afero.Fs, exclude []string, g
 		return nil, nil
 	}
 
-	imageName := "kcllang/kcl:v0.10.0"
-	if runtime.GOARCH == "arm64" {
-		imageName = "kcllang/kcl-arm64:v0.10.0"
-	}
-
 	if err := generator.Generate(
 		ctx,
 		crdFS,
 		baseFolder,
-		imageName,
+		kclImage,
 		[]string{
 			"sh", "-c",
 			`find . -name "*.yaml" -exec kcl import -m crd -s {} \;`,

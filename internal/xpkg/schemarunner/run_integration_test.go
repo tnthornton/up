@@ -21,12 +21,15 @@ import (
 	"context"
 	_ "embed"
 	"os"
-	"runtime"
 	"testing"
 
 	"github.com/crossplane/crossplane-runtime/pkg/test"
 	"github.com/google/go-cmp/cmp"
 	"github.com/spf13/afero"
+)
+
+const (
+	kclImage = "kcllang/kcl:v0.10.6"
 )
 
 func TestRunContainerWithKCLIntegration(t *testing.T) {
@@ -43,14 +46,6 @@ func TestRunContainerWithKCLIntegration(t *testing.T) {
 		err error
 	}
 
-	imageName := ""
-	switch runtime.GOARCH {
-	case "arm64":
-		imageName = "kcllang/kcl-arm64:v0.10.0"
-	default:
-		imageName = "kcllang/kcl:v0.10.0"
-	}
-
 	cases := map[string]struct {
 		reason string
 		args   args
@@ -60,7 +55,7 @@ func TestRunContainerWithKCLIntegration(t *testing.T) {
 			reason: "Should successfully run container with crd.",
 			args: args{
 				baseFolder: "data/input", // Use relative path here
-				imageName:  imageName,
+				imageName:  kclImage,
 				command: []string{
 					"sh", "-c",
 					`find . -name "*.yaml" -exec kcl import -m crd -s {} \;`,
