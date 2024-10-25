@@ -19,14 +19,18 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"sync"
 
 	"github.com/alecthomas/kong"
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
-	"github.com/google/go-containerregistry/pkg/crane"
+	"github.com/google/go-containerregistry/pkg/authn"
+	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/pterm/pterm"
 	"github.com/spf13/afero"
+	"golang.org/x/sync/errgroup"
 	"sigs.k8s.io/yaml"
 
 	"github.com/upbound/up/internal/upterm"
@@ -57,57 +61,101 @@ func main() {
 	}
 }
 
-func (c *cli) generateSchema(ctx context.Context) error { // nolint:gocyclo
+func (c *cli) generateSchema(ctx context.Context) error { //nolint:gocyclo
 	var (
-		image v1.Image
-		err   error
+		processedImages []v1.Image
+		mu              sync.Mutex
 	)
 
-	err = upterm.WrapWithSuccessSpinner(fmt.Sprintf("Loading Source Image %s", c.SourceImage), upterm.CheckmarkSuccessSpinner, func() error {
-		image, err = crane.Pull(c.SourceImage)
+	indexRef, err := name.ParseReference(c.SourceImage)
+	if err != nil {
+		return errors.Wrapf(err, "error parsing source image reference")
+	}
+	index, err := remote.Index(indexRef)
+	if err != nil {
+		return errors.Wrapf(err, "error pulling image index")
+	}
+
+	indexManifest, err := index.IndexManifest()
+	if err != nil {
+		return errors.Wrapf(err, "error retrieving index manifest")
+	}
+
+	g, gCtx := errgroup.WithContext(ctx)
+
+	for _, desc := range indexManifest.Manifests {
+		desc := desc
+		g.Go(func() error {
+			digestRef := indexRef.Context().Digest(desc.Digest.String())
+			img, err := remote.Image(digestRef)
+			if err != nil {
+				return errors.Wrapf(err, "error pulling architecture-specific image %s", desc.Digest)
+			}
+
+			configFile, err := img.ConfigFile()
+			if err != nil {
+				return errors.Wrapf(err, "error getting image config file")
+			}
+
+			m, err := xpkgmarshaler.NewMarshaler()
+			if err != nil {
+				return errors.Wrapf(err, "error creating xpkg marshaler")
+			}
+
+			parsedPkg, err := m.FromImage(xpkg.Image{Image: img}) //nolint:contextcheck
+			if err != nil {
+				return errors.Wrapf(err, "error parsing image")
+			}
+
+			memFs := afero.NewMemMapFs()
+			if cerr := copyCrdToFs(parsedPkg, memFs); cerr != nil {
+				return errors.Wrapf(cerr, "error copying CRDs to filesystem")
+			}
+
+			err = upterm.WrapWithSuccessSpinner("Schema Generation", upterm.CheckmarkSuccessSpinner, func() error {
+				img, err = runSchemaGeneration(gCtx, memFs, img, configFile.Config)
+				return err
+			})
+			if err != nil {
+				return errors.Wrapf(err, "error generating schema for architecture %v", desc.Platform)
+			}
+
+			mu.Lock()
+			processedImages = append(processedImages, img)
+			mu.Unlock()
+
+			return nil
+		})
+	}
+
+	// Wait for all goroutines to complete
+	if err := g.Wait(); err != nil {
 		return err
+	}
+
+	// Build a multi-architecture index using the processed images
+	multiArchIndex, _, err := xpkg.BuildIndex(processedImages...)
+	if err != nil {
+		return errors.Wrapf(err, "error building multi-architecture index")
+	}
+
+	// Parse the target image reference
+	targetRef, err := name.ParseReference(c.TargetImage)
+	if err != nil {
+		return errors.Wrapf(err, "error parsing target image reference")
+	}
+
+	// Push the new multi-arch index using remote.WriteIndex
+	err = upterm.WrapWithSuccessSpinner(fmt.Sprintf("Pushing Target Multi-Arch Image %s", c.TargetImage), upterm.CheckmarkSuccessSpinner, func() error {
+		return remote.WriteIndex(
+			targetRef,
+			multiArchIndex,
+			remote.WithAuthFromKeychain(authn.NewMultiKeychain(
+				authn.DefaultKeychain,
+			)))
 	})
 	if err != nil {
-		return errors.Wrapf(err, "error pulling image")
-	}
-
-	configFile, err := image.ConfigFile()
-	if err != nil {
-		return errors.Wrapf(err, "error getting image config file")
-	}
-
-	m, err := xpkgmarshaler.NewMarshaler()
-	if err != nil {
-		return errors.Wrapf(err, "error getting xpkg marshaler")
-	}
-
-	parsedPkg, err := m.FromImage(xpkg.Image{ //nolint:contextcheck
-		Image: image,
-	})
-	if err != nil {
-		return errors.Wrapf(err, "error parsing image")
-	}
-
-	memFs := afero.NewMemMapFs()
-	cerr := copyCrdToFs(parsedPkg, memFs)
-	if cerr != nil {
-		return errors.Wrapf(err, "error copy crds to fs")
-	}
-
-	err = upterm.WrapWithSuccessSpinner("Schema Generation", upterm.CheckmarkSuccessSpinner, func() error {
-		image, err = runSchemaGeneration(ctx, memFs, image, configFile.Config)
-		return err
-	})
-	if err != nil {
-		return errors.Wrapf(err, "error generating schema")
-	}
-
-	err = upterm.WrapWithSuccessSpinner(fmt.Sprintf("Pushing Target Image %s", c.TargetImage), upterm.CheckmarkSuccessSpinner, func() error {
-		err = crane.Push(image, c.TargetImage)
-		return err
-	})
-	if err != nil {
-		return errors.Wrapf(err, "error push to registry %v", c.TargetImage)
+		return errors.Wrapf(err, "error pushing multi-arch image to registry %v", c.TargetImage)
 	}
 
 	return nil
