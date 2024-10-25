@@ -19,7 +19,7 @@
 // https://github.com/golang/go/wiki/Modules#how-can-i-track-tool-dependencies-for-a-module
 
 // Add license headers to all files.
-//go:generate go run -tags generate github.com/google/addlicense -v -ignore **/testdata/*.yaml -ignore **/testdata/**/Dockerfile -ignore **/vendor/** -ignore **/testdata/**/*.py -c "Upbound Inc" . ../cmd ../pkg
+//go:generate go run -tags generate github.com/google/addlicense -v -ignore **/testdata/** -ignore **/vendor/** -c "Upbound Inc" . ../cmd ../pkg
 
 // Generate deepcopy methodsets and CRD manifests
 //go:generate go run -tags generate sigs.k8s.io/controller-tools/cmd/controller-gen object:headerFile=../hack/boilerplate.go.txt paths=../internal/upbound/...
