@@ -121,14 +121,14 @@ func (c *generateCmd) AfterApply(kongCtx *kong.Context, p pterm.TextPrinter) err
 	c.modelsFS = afero.NewBasePathFs(afero.NewOsFs(), filepath.Join(projDirPath, ".up"))
 
 	// The location of the co position defines the root of the function.
-	project, paths, err := project.Parse(c.projFS, c.ProjectFile, c.Repository)
+	proj, err := project.Parse(c.projFS, c.ProjectFile)
 	if err != nil {
 		return err
 	}
-	c.projectRepository = project.Spec.Repository
+	c.projectRepository = proj.Spec.Repository
 	c.functionFS = afero.NewBasePathFs(
 		c.projFS, filepath.Join(
-			paths.Functions,
+			proj.Spec.Paths.Functions,
 			strings.ToLower(filepath.Base(filepath.Dir(c.CompositionPath))),
 		),
 	)

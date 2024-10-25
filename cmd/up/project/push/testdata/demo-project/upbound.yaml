@@ -1,21 +1,6 @@
-# Copyright 2024 Upbound Inc
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 apiVersion: meta.dev.upbound.io/v1alpha1
 kind: Project
 metadata:
-  creationTimestamp: null
   name: demo-project
 spec:
   description: This is where you can describe your project.
@@ -23,5 +8,7 @@ spec:
   maintainer: Upbound User <user@example.com>
   readme: |
     This is where you can add a readme for your project.
-  repository: xpkg.upbound.io/example/project-template
+  repository: xpkg.upbound.io/unittest/demo-project
   source: github.com/upbound/project-template
+  paths:
+    functions: empty

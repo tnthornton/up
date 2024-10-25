@@ -17,52 +17,29 @@ package build
 import (
 	"context"
 	"fmt"
-	"io/fs"
-	"os"
+	"io"
 	"path/filepath"
 	"reflect"
-	"strings"
-	"sync"
 
 	"github.com/alecthomas/kong"
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
-	"github.com/crossplane/crossplane-runtime/pkg/parser"
-	xpv1 "github.com/crossplane/crossplane/apis/apiextensions/v1"
-	xpmetav1 "github.com/crossplane/crossplane/apis/pkg/meta/v1"
-	"github.com/google/go-containerregistry/pkg/name"
-	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/cache"
-	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
 	"github.com/pterm/pterm"
 	"github.com/spf13/afero"
-	"golang.org/x/sync/errgroup"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"sigs.k8s.io/yaml"
 
+	"github.com/upbound/up/internal/async"
 	"github.com/upbound/up/internal/project"
 	"github.com/upbound/up/internal/upterm"
 	"github.com/upbound/up/internal/version"
-	"github.com/upbound/up/internal/xpkg"
 	xcache "github.com/upbound/up/internal/xpkg/dep/cache"
 	"github.com/upbound/up/internal/xpkg/dep/manager"
 	"github.com/upbound/up/internal/xpkg/dep/resolver/image"
 	"github.com/upbound/up/internal/xpkg/functions"
-	"github.com/upbound/up/internal/xpkg/mutators"
-	"github.com/upbound/up/internal/xpkg/parser/examples"
-	"github.com/upbound/up/internal/xpkg/parser/schema"
-	pyaml "github.com/upbound/up/internal/xpkg/parser/yaml"
-	"github.com/upbound/up/internal/xpkg/schemagenerator"
 	"github.com/upbound/up/internal/xpkg/schemarunner"
 	"github.com/upbound/up/internal/xpkg/workspace"
 
 	"github.com/upbound/up/pkg/apis/project/v1alpha1"
-)
-
-const (
-	// ConfigurationTag is the tag used for the configuration image in the built
-	// package.
-	ConfigurationTag = "configuration"
 )
 
 type Cmd struct {
@@ -125,7 +102,8 @@ func (c *Cmd) AfterApply(kongCtx *kong.Context, p pterm.TextPrinter) error {
 
 	ws, err := workspace.New("/",
 		workspace.WithFS(c.projFS),
-		workspace.WithPrinter(p),
+		// The user doesn't care about workspace warnings during build.
+		workspace.WithPrinter(&pterm.BasicTextPrinter{Writer: io.Discard}),
 		workspace.WithPermissiveParser(),
 	)
 	if err != nil {
@@ -145,186 +123,59 @@ func (c *Cmd) AfterApply(kongCtx *kong.Context, p pterm.TextPrinter) error {
 
 	// workaround interfaces not being bindable ref: https://github.com/alecthomas/kong/issues/48
 	kongCtx.BindTo(ctx, (*context.Context)(nil))
+
 	return nil
 }
 
 func (c *Cmd) Run(ctx context.Context, p pterm.TextPrinter) error { //nolint:gocyclo // This is fine.
-	var mut []xpkg.Mutator
 	pterm.EnableStyling()
 
 	if c.MaxConcurrency == 0 {
 		c.MaxConcurrency = 1
 	}
 
-	project, paths, err := project.Parse(c.projFS, c.ProjectFile, c.Repository)
-	if err != nil {
-		return err
-	}
-
-	err = upterm.WrapWithSuccessSpinner("Checking dependencies", upterm.CheckmarkSuccessSpinner, func() error {
-		deps, _ := c.ws.View().Meta().DependsOn()
-
-		// Check all dependencies in the cache
-		for _, dep := range deps {
-			_, _, err := c.m.AddAll(ctx, dep)
-			if err != nil {
-				return errors.Wrapf(err, "failed to check dependencies for %v", dep)
-			}
-		}
-		return nil
-	})
-
-	if err != nil {
-		return err
-	}
-	// Scaffold a configuration based on the metadata in the project. Later
-	// we'll add any embedded functions we build to the dependencies.
-	cfg := &xpmetav1.Configuration{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: xpmetav1.SchemeGroupVersion.String(),
-			Kind:       xpmetav1.ConfigurationKind,
-		},
-		ObjectMeta: cfgMetaFromProject(project),
-		Spec: xpmetav1.ConfigurationSpec{
-			MetaSpec: xpmetav1.MetaSpec{
-				Crossplane: project.Spec.Crossplane,
-				DependsOn:  project.Spec.DependsOn,
-			},
-		},
-	}
-
-	functionsSource := afero.NewBasePathFs(c.projFS, paths.Functions)
-	// By default we search the whole project directory except the examples
-	// directory.
-	apisSource := c.projFS
-	apiExcludes := []string{paths.Examples}
-	if paths.APIs != "/" {
-		apisSource = afero.NewBasePathFs(c.projFS, paths.APIs)
-		apiExcludes = []string{}
-	}
-
-	// In parallel:
-	// * Find embedded functions and build their packages.
-	// * Collect APIs (composites).
-	var imgMap imageTagMap
-	eg, ctx := errgroup.WithContext(ctx)
-	// Semaphore to limit the number of functions we build in parallel.
-	sem := make(chan struct{}, c.MaxConcurrency)
-	eg.Go(func() error {
-		sem <- struct{}{}
-		defer func() {
-			<-sem
-		}()
-
-		imgs, deps, err := c.buildFunctions(ctx, functionsSource, project)
-		if err != nil {
-			return err
-		}
-
-		imgMap = imgs
-		cfg.Spec.DependsOn = append(cfg.Spec.DependsOn, deps...)
-
-		return nil
-	})
-
-	// Collect APIs (composites).
-	var packageFS afero.Fs
-	eg.Go(func() error {
-		pfs, err := collectComposites(apisSource, apiExcludes)
-		packageFS = pfs
-		return err
-	})
-
-	// Generate KCL Schemas
-	eg.Go(func() error {
-		kfs, err := schemagenerator.GenerateSchemaKcl(ctx, apisSource, apiExcludes, c.schemaRunner)
-		if err != nil {
-			return err
-		}
-
-		if kfs != nil {
-			mut = append(mut, mutators.NewSchemaMutator(schema.New(kfs, "", xpkg.StreamFileMode), xpkg.SchemaKclAnnotation))
-		}
-		return nil
-	})
-
-	// Generate Python Schemas
-	eg.Go(func() error {
-		pfs, err := schemagenerator.GenerateSchemaPython(ctx, apisSource, apiExcludes, c.schemaRunner)
-		if err != nil {
-			return err
-		}
-
-		if pfs != nil {
-			mut = append(mut, mutators.NewSchemaMutator(schema.New(pfs, "", xpkg.StreamFileMode), xpkg.SchemaPythonAnnotation))
-		}
-
-		return nil
-	})
-
-	// wait for go runtines
-	err = upterm.WrapWithSuccessSpinner("Building functions", upterm.CheckmarkSuccessSpinner, eg.Wait)
-	if err != nil {
-		return err
-	}
-
-	// Add the package metadata to the collected composites.
-	y, err := yaml.Marshal(cfg)
-	if err != nil {
-		return errors.Wrap(err, "failed to marshal package metadata")
-	}
-	err = afero.WriteFile(packageFS, "/crossplane.yaml", y, 0644)
-	if err != nil {
-		return errors.Wrap(err, "failed to write package metadata")
-	}
-
-	// Build the configuration package from the constructed filesystem.
-	pp, err := pyaml.New()
-	if err != nil {
-		return errors.Wrap(err, "failed to create parser")
-	}
-	builder := xpkg.New(
-		parser.NewFsBackend(packageFS, parser.FsDir("/")),
-		nil,
-		parser.NewFsBackend(afero.NewBasePathFs(c.projFS, paths.Examples),
-			parser.FsDir("/"),
-			parser.FsFilters(parser.SkipNotYAML()),
-		),
-		pp,
-		examples.New(),
-		mut...,
-	)
-
-	var img v1.Image
-	err = upterm.WrapWithSuccessSpinner(
-		"Building configuration package",
+	var proj *v1alpha1.Project
+	err := upterm.WrapWithSuccessSpinner(
+		"Parsing project metadata",
 		upterm.CheckmarkSuccessSpinner,
 		func() error {
-			img, _, err = builder.Build(ctx)
+			projFilePath := filepath.Join("/", filepath.Base(c.ProjectFile))
+			lproj, err := project.Parse(c.projFS, projFilePath)
 			if err != nil {
-				return errors.Wrap(err, "failed to build package")
+				return errors.Wrap(err, "failed to parse project metadata")
 			}
+			proj = lproj
 			return nil
-		})
+		},
+	)
 	if err != nil {
 		return err
 	}
 
-	img, err = c.addLabels(img)
-	if err != nil {
-		return errors.Wrapf(err, "failed add labels to package")
+	if c.Repository != "" {
+		proj.Spec.Repository = c.Repository
 	}
 
-	// Write out the packages to a file, which can be consumed by up project
-	// push.
-	imgTag, err := name.NewTag(fmt.Sprintf("%s:%s", project.Spec.Repository, ConfigurationTag))
+	b := project.NewBuilder(
+		project.BuildWithMaxConcurrency(c.MaxConcurrency),
+		project.BuildWithFunctionIdentifier(c.functionIdentifier),
+		project.BuildWithSchemaRunner(c.schemaRunner),
+	)
+
+	var imgMap project.ImageTagMap
+	err = async.WrapWithSuccessSpinners(func(ch async.EventChannel) error {
+		var err error
+		imgMap, err = b.Build(ctx, proj, c.projFS,
+			project.BuildWithEventChannel(ch),
+			project.BuildWithImageLabels(c.imageLabels()),
+		)
+		return err
+	})
 	if err != nil {
-		return errors.Wrap(err, "failed to construct image tag")
+		return err
 	}
-	imgMap[imgTag] = img
 
-	outFile := filepath.Join(c.OutputDir, fmt.Sprintf("%s.uppkg", project.Name))
-
+	outFile := filepath.Join(c.OutputDir, fmt.Sprintf("%s.uppkg", proj.Name))
 	err = c.outputFS.MkdirAll(c.OutputDir, 0755)
 	if err != nil {
 		return errors.Wrapf(err, "failed to create output directory %q", c.OutputDir)
@@ -364,285 +215,11 @@ func (c *Cmd) Run(ctx context.Context, p pterm.TextPrinter) error { //nolint:goc
 	return nil
 }
 
-type imageTagMap map[name.Tag]v1.Image
-
-// buildFunctions builds the embedded functions found in directories at the top
-// level of the provided filesystem. The resulting images are returned in a map
-// where the keys are their tags, suitable for writing to a file with
-// go-containerregistry's `tarball.MultiWrite`.
-func (c *Cmd) buildFunctions(ctx context.Context, fromFS afero.Fs, project *v1alpha1.Project) (imageTagMap, []xpmetav1.Dependency, error) { //nolint:gocyclo // This is fine.
-	var (
-		imgMap = make(map[name.Tag]v1.Image)
-		imgMu  sync.Mutex
-	)
-
-	infos, err := afero.ReadDir(fromFS, "/")
-	switch {
-	case os.IsNotExist(err):
-		// There are no functions.
-		return imgMap, nil, nil
-	case err != nil:
-		return nil, nil, errors.Wrap(err, "failed to list functions directory")
+func (c *Cmd) imageLabels() map[string]string {
+	return map[string]string{
+		"io.upbound.up.userAgent": version.UserAgent(),
+		"io.upbound.up.buildCmd":  c.getCmdOptions(),
 	}
-
-	fnDirs := make([]string, 0, len(infos))
-	for _, info := range infos {
-		if info.IsDir() {
-			fnDirs = append(fnDirs, info.Name())
-		}
-	}
-
-	deps := make([]xpmetav1.Dependency, len(fnDirs))
-	eg, ctx := errgroup.WithContext(ctx)
-
-	for i, fnName := range fnDirs {
-		eg.Go(func() error {
-			fnRepo := fmt.Sprintf("%s_%s", project.Spec.Repository, fnName)
-			fnFS := afero.NewBasePathFs(fromFS, fnName)
-			imgs, err := c.buildFunction(ctx, fnFS, project, fnName)
-			if err != nil {
-				return errors.Wrapf(err, "failed to build function %q", fnName)
-			}
-
-			// Construct an index so we know the digest for the dependency. This
-			// index will be reproduced when we push the image.
-			idx, imgs, err := xpkg.BuildIndex(imgs...)
-			if err != nil {
-				return errors.Wrapf(err, "failed to construct index for function image %q", fnName)
-			}
-			dgst, err := idx.Digest()
-			if err != nil {
-				return errors.Wrapf(err, "failed to get index digest for function image %q", fnName)
-			}
-			deps[i] = xpmetav1.Dependency{
-				Function: &fnRepo,
-				Version:  dgst.String(),
-			}
-
-			for _, img := range imgs {
-				cfg, err := img.ConfigFile()
-				if err != nil {
-					return errors.Wrapf(err, "failed to get config for function image %q", fnName)
-				}
-
-				tag := fmt.Sprintf("%s:%s", fnRepo, cfg.Architecture)
-				imgTag, err := name.NewTag(tag)
-				if err != nil {
-					return errors.Wrapf(err, "failed to construct tag for function image %q", fnName)
-				}
-				imgMu.Lock()
-				imgMap[imgTag] = img
-				imgMu.Unlock()
-			}
-
-			return nil
-		})
-	}
-
-	err = eg.Wait()
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return imgMap, deps, nil
-}
-
-// buildFunction builds images for a single function whose source resides in the
-// given filesystem. One image will be returned for each architecture specified
-// in the project.
-func (c *Cmd) buildFunction(ctx context.Context, fromFS afero.Fs, p *v1alpha1.Project, fnName string) ([]v1.Image, error) { // nolint:gocyclo
-	fn := &xpmetav1.Function{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: xpmetav1.SchemeGroupVersion.String(),
-			Kind:       xpmetav1.FunctionKind,
-		},
-		ObjectMeta: fnMetaFromProject(p, fnName),
-	}
-	metaFS := afero.NewMemMapFs()
-	y, err := yaml.Marshal(fn)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to marshal function metadata")
-	}
-	err = afero.WriteFile(metaFS, "/crossplane.yaml", y, 0644)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to write function metadata")
-	}
-
-	// Note there's no way to configure the location of examples in an embedded
-	// function. If we start supporting projects as embedded functions we should
-	// probably change this, but for now this is good enough.
-	examplesParser := parser.NewEchoBackend("")
-	examplesExist, err := afero.IsDir(fromFS, "/examples")
-	switch {
-	case err == nil, os.IsNotExist(err):
-		// Check examplesExist to determine whether to parse examples.
-	default:
-		return nil, errors.Wrap(err, "failed to check for examples")
-	}
-	if examplesExist {
-		examplesParser = parser.NewFsBackend(fromFS,
-			parser.FsDir("/examples"),
-			parser.FsFilters(parser.SkipNotYAML()),
-		)
-	}
-
-	pp, err := pyaml.New()
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to create parser")
-	}
-	builder := xpkg.New(
-		parser.NewFsBackend(metaFS, parser.FsDir("/")),
-		nil,
-		examplesParser,
-		pp,
-		examples.New(),
-	)
-
-	fnBuilder, err := c.functionIdentifier.Identify(fromFS)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to find a builder")
-	}
-
-	_, paths, err := project.Parse(c.projFS, c.ProjectFile, c.Repository)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to get function path")
-	}
-
-	basePath, err := c.projFS.(*afero.BasePathFs).RealPath(".")
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to get basePath from project")
-	}
-
-	fnxBasePath, err := fromFS.(*afero.BasePathFs).RealPath(".")
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to get basePath from function")
-	}
-
-	osBasePath := filepath.Join(basePath, paths.Functions, fnxBasePath)
-
-	runtimeImages, err := fnBuilder.Build(ctx, fromFS, p.Spec.Architectures, &osBasePath)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to build runtime images")
-	}
-
-	pkgImages := make([]v1.Image, 0, len(runtimeImages))
-
-	for _, img := range runtimeImages {
-		pkgImage, _, err := builder.Build(ctx, xpkg.WithController(img))
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to build function package")
-		}
-		pkgImages = append(pkgImages, pkgImage)
-	}
-
-	return pkgImages, nil
-}
-
-func collectComposites(fromFS afero.Fs, exclude []string) (afero.Fs, error) { //nolint:gocyclo // This is fine.
-	toFS := afero.NewMemMapFs()
-	return toFS, afero.Walk(fromFS, "/", func(path string, info fs.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-
-		for _, excl := range exclude {
-			if strings.HasPrefix(path, excl) {
-				return filepath.SkipDir
-			}
-		}
-
-		if info.IsDir() {
-			return nil
-		}
-		// Ignore files without yaml extensions.
-		ext := filepath.Ext(path)
-		if ext != ".yaml" && ext != ".yml" {
-			return nil
-		}
-
-		var u metav1.TypeMeta
-		bs, err := afero.ReadFile(fromFS, path)
-		if err != nil {
-			return errors.Wrapf(err, "failed to read file %q", path)
-		}
-		err = yaml.Unmarshal(bs, &u)
-		if err != nil {
-			return errors.Wrapf(err, "failed to parse file %q", path)
-		}
-
-		// Ignore anything that's not an XRD or Composition, since those are the
-		// only allowed types in a Configuration xpkg.
-		if u.GroupVersionKind().Group != xpv1.Group {
-			return nil
-		}
-		if u.Kind != xpv1.CompositeResourceDefinitionKind && u.Kind != xpv1.CompositionKind {
-			return nil
-		}
-
-		// Copy the file into the package FS.
-		err = afero.WriteFile(toFS, path, bs, 0644)
-		if err != nil {
-			return errors.Wrapf(err, "failed to write file %q to package", path)
-		}
-
-		return nil
-	})
-}
-
-func cfgMetaFromProject(proj *v1alpha1.Project) metav1.ObjectMeta {
-	meta := proj.ObjectMeta.DeepCopy()
-
-	if meta.Annotations == nil {
-		meta.Annotations = make(map[string]string)
-	}
-
-	meta.Annotations["meta.crossplane.io/maintainer"] = proj.Spec.Maintainer
-	meta.Annotations["meta.crossplane.io/source"] = proj.Spec.Source
-	meta.Annotations["meta.crossplane.io/license"] = proj.Spec.License
-	meta.Annotations["meta.crossplane.io/description"] = proj.Spec.Description
-	meta.Annotations["meta.crossplane.io/readme"] = proj.Spec.Readme
-
-	return *meta
-}
-
-func fnMetaFromProject(proj *v1alpha1.Project, fnName string) metav1.ObjectMeta {
-	meta := proj.ObjectMeta.DeepCopy()
-
-	meta.Name = fmt.Sprintf("%s-%s", meta.Name, fnName)
-
-	if meta.Annotations == nil {
-		meta.Annotations = make(map[string]string)
-	}
-
-	meta.Annotations["meta.crossplane.io/maintainer"] = proj.Spec.Maintainer
-	meta.Annotations["meta.crossplane.io/source"] = proj.Spec.Source
-	meta.Annotations["meta.crossplane.io/license"] = proj.Spec.License
-	meta.Annotations["meta.crossplane.io/description"] = fmt.Sprintf("Function %s from project %s", fnName, proj.Name)
-
-	return *meta
-}
-
-// addLabels adds labels to a v1.Image
-func (c *Cmd) addLabels(img v1.Image) (v1.Image, error) {
-	cfgFile, err := img.ConfigFile()
-	if err != nil {
-		return nil, errors.Wrap(err, "error getting config file")
-	}
-
-	if cfgFile.Config.Labels == nil {
-		cfgFile.Config.Labels = make(map[string]string)
-	}
-
-	cfgFile.Config.Labels["io.upbound.up.userAgent"] = version.UserAgent()
-	cfgFile.Config.Labels["io.upbound.up.buildCmd"] = c.getCmdOptions()
-
-	// Mutate the image to include the updated configuration with labels
-	updatedImg, err := mutate.ConfigFile(img, cfgFile)
-	if err != nil {
-		return nil, errors.Wrap(err, "error updating config file with labels")
-	}
-
-	return updatedImg, nil
 }
 
 // getCmdOptions generates a string of all command-line options from the Cmd struct

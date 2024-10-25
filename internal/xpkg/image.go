@@ -15,6 +15,9 @@
 package xpkg
 
 import (
+	"slices"
+	"strings"
+
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/empty"
@@ -120,6 +123,19 @@ func BuildIndex(imgs ...v1.Image) (v1.ImageIndex, []v1.Image, error) {
 				},
 			},
 		})
+	}
+
+	// Sort the addendums so that the resulting index will always be the same
+	// when the same images are passed in, regardless of their order.
+	var sortErr error
+	slices.SortFunc(adds, func(a, b mutate.IndexAddendum) int {
+		dgstA, errA := a.Add.Digest()
+		dgstB, errB := b.Add.Digest()
+		sortErr = errors.Join(errA, errB)
+		return strings.Compare(dgstA.String(), dgstB.String())
+	})
+	if sortErr != nil {
+		return nil, nil, sortErr
 	}
 
 	return mutate.AppendManifests(empty.Index, adds...), images, nil
