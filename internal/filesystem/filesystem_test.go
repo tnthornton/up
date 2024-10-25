@@ -285,3 +285,67 @@ func TestIsFsEmpty(t *testing.T) {
 		})
 	}
 }
+
+// TestFindAllBaseFolders tests the FindAllBaseFolders function.
+
+func TestFindAllBaseFolders(t *testing.T) {
+	tests := []struct {
+		name      string
+		setupFs   func(fs afero.Fs)
+		expected  []string
+		expectErr bool
+	}{
+		{
+			name: "EmptyFileSystem",
+			setupFs: func(fs afero.Fs) {
+				// No setup, empty filesystem
+			},
+			expected:  []string{},
+			expectErr: false,
+		},
+		{
+			name: "SingleFolderInRoot",
+			setupFs: func(fs afero.Fs) {
+				fs.MkdirAll("/folder1", os.ModePerm)
+			},
+			expected:  []string{"folder1"},
+			expectErr: false,
+		},
+		{
+			name: "MultipleFoldersInRoot",
+			setupFs: func(fs afero.Fs) {
+				fs.MkdirAll("/folder1", os.ModePerm)
+				fs.MkdirAll("/folder2", os.ModePerm)
+			},
+			expected:  []string{"folder1", "folder2"},
+			expectErr: false,
+		},
+		{
+			name: "NestedFolders",
+			setupFs: func(fs afero.Fs) {
+				fs.MkdirAll("/folder1/subfolder", os.ModePerm)
+				fs.MkdirAll("/folder2", os.ModePerm)
+			},
+			expected:  []string{"folder1", "folder2"},
+			expectErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := afero.NewMemMapFs()
+
+			tt.setupFs(fs)
+
+			folders, err := FindAllBaseFolders(fs, "/")
+
+			if tt.expectErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+
+			require.ElementsMatch(t, tt.expected, folders)
+		})
+	}
+}

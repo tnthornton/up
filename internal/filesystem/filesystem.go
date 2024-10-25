@@ -246,3 +246,20 @@ func IsFsEmpty(fs afero.Fs) (bool, error) {
 
 	return isEmpty, nil
 }
+
+// FindAllBaseFolders in filesystem from the rootPath and returns a list of base-level directories within the root folder.
+func FindAllBaseFolders(fs afero.Fs, rootPath string) ([]string, error) {
+	var folders []string
+
+	infos, err := afero.ReadDir(fs, rootPath)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to read directory")
+	}
+	for _, info := range infos {
+		if info.IsDir() {
+			folders = append(folders, info.Name())
+		}
+	}
+
+	return folders, nil
+}

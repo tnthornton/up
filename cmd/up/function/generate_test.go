@@ -44,6 +44,9 @@ var (
 
 	//go:embed testdata/packages/*
 	packagesFS embed.FS
+
+	//go:embed testdata/project-embedded-functions/.up/**
+	modelsKclFS embed.FS
 )
 
 // TestGenerateCmd_Run tests the Run method of the generateCmd struct.
@@ -91,7 +94,7 @@ func TestGenerateCmd_Run(t *testing.T) {
 
 			// Create mock fetcher that holds the images
 			testPkgFS := afero.NewBasePathFs(afero.FromIOFS{FS: packagesFS}, "testdata/packages")
-
+			testmodelsKclFS := afero.NewBasePathFs(afero.FromIOFS{FS: modelsKclFS}, "testdata/project-embedded-functions/.up")
 			r := image.NewResolver(
 				image.WithFetcher(
 					&image.FSFetcher{FS: testPkgFS},
@@ -113,18 +116,14 @@ func TestGenerateCmd_Run(t *testing.T) {
 			err = ws.Parse(context.Background())
 			assert.NilError(t, err)
 
-			// Create temporary directories for the functionFS
-			tempFunctionDir, err := afero.TempDir(afero.NewOsFs(), "", "functionFS")
-			assert.NilError(t, err)
-			defer os.RemoveAll(tempFunctionDir) // Clean up after the test
-
 			// Use BasePathFs for functionFS, scoped to the temp directories
-			functionFS := afero.NewBasePathFs(afero.NewOsFs(), tempFunctionDir)
+			functionFS := afero.NewBasePathFs(projFS, "/functions/xnetwork")
 
 			// Setup the generateCmd with mock dependencies
 			c := &generateCmd{
 				ProjectFile:       "upbound.yaml",
 				projFS:            projFS,
+				modelsFS:          testmodelsKclFS,
 				functionFS:        functionFS,
 				Language:          tc.language,
 				CompositionPath:   tc.compositionPath,

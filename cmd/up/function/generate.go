@@ -31,6 +31,7 @@ import (
 	"github.com/spf13/afero"
 	"sigs.k8s.io/yaml"
 
+	icrd "github.com/upbound/up/internal/crd"
 	"github.com/upbound/up/internal/filesystem"
 	"github.com/upbound/up/internal/project"
 	"github.com/upbound/up/internal/upterm"
@@ -56,6 +57,19 @@ const kclModLockTemplate = `[dependencies]
     version = "0.0.1"
 `
 
+const kclMainTemplate = `{{range .Versions}}import models.{{.}} as {{.}}
+{{end}}import models.k8s.apimachinery.pkg.apis.meta.v1 as metav1
+
+_metadata = lambda name: str -> any {
+    { annotations = { "krm.kcl.dev/composition-resource-name" = name }}
+}
+
+_items = [
+
+]
+items = _items
+`
+
 const pythonReqTemplate = `crossplane-function-sdk-python==0.5.0
 pydantic==2.9.2
 `
@@ -67,6 +81,9 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     pass
 `
 
+type kclMainTemplateData struct {
+	Versions []string
+}
 type kclModInfo struct {
 	Name string
 }
@@ -207,7 +224,7 @@ func (c *generateCmd) Run(ctx context.Context, p pterm.TextPrinter) error { // n
 
 	switch c.Language {
 	case "kcl":
-		functionSpecificFs, err = generateKCLFiles(comp.Spec.CompositeTypeRef.Kind)
+		functionSpecificFs, err = c.generateKCLFiles(comp.Spec.CompositeTypeRef.Kind)
 		if err != nil {
 			return errors.Wrap(err, "failed to handle kcl")
 		}
@@ -260,7 +277,7 @@ func (c *generateCmd) Run(ctx context.Context, p pterm.TextPrinter) error { // n
 	return nil
 }
 
-func generateKCLFiles(outputPath string) (afero.Fs, error) {
+func (c *generateCmd) generateKCLFiles(outputPath string) (afero.Fs, error) { // nolint:gocyclo
 	targetFS := afero.NewMemMapFs()
 
 	kclModInfo := kclModInfo{
@@ -293,13 +310,26 @@ func generateKCLFiles(outputPath string) (afero.Fs, error) {
 		}
 	}
 	mainPath := "main.k"
-	if exists, err := afero.Exists(targetFS, mainPath); err != nil {
-		return nil, errors.Wrapf(err, "error checking file existence: %v", mainPath)
-	} else if !exists {
-		_, err := targetFS.Create(filepath.Clean(mainPath))
-		if err != nil {
-			return nil, errors.Wrapf(err, "error creating file: %v", mainPath)
+	file, err = targetFS.Create(filepath.Clean(mainPath))
+	if err != nil {
+		return nil, errors.Wrapf(err, "error creating file: %v", mainPath)
+	}
+	versions, err := filesystem.FindAllBaseFolders(c.modelsFS, "kcl/models")
+	if err != nil {
+		return nil, errors.Wrap(err, "error finding version folders")
+	}
+	var filteredVersions []string
+	for _, version := range versions {
+		if icrd.IsKnownAPIVersion(version) {
+			filteredVersions = append(filteredVersions, version)
 		}
+	}
+	mainTemplateData := kclMainTemplateData{
+		Versions: filteredVersions,
+	}
+	mainTmpl := template.Must(template.New("kcl").Parse(kclMainTemplate))
+	if err := mainTmpl.Execute(file, mainTemplateData); err != nil {
+		return nil, errors.Wrapf(err, "Error writing KCL template to file: %v", mainPath)
 	}
 
 	return targetFS, nil
