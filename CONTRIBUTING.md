@@ -24,27 +24,27 @@ This is a slimmed-down version of the release process described [here](https://g
    repo (e.g. `release-0.25`).
 1. **tag release**: Run the `Tag` action on the _release branch_ with the
    desired version (e.g. `v0.25.0`).
-1. **build/publish**: Run the `CI` action on the release-branch (**not on the tag!**).
+1. **build/publish**: Run the `CI` action on the tag.
 1. **tag next pre-release**: Run the `tag` action on the main development branch
    with the `-0.rc.0` for the next release (e.g. `v0.26.0-0.rc.0`). (**NOTE**:
    we added the `-0.` prefix to allow correctly sorting release candidates)
 1. **verify**: Verify all artifacts have been published successfully, perform
    sanity testing.
    - Check in https://cli.upbound.io/stable?prefix=build/release-0.25/v0.25.0.
-     Download some binaries / package formats and smoke test them, e.g. by 
-     - (all platforms) download your architecture from the `bin` folder and run 
+     Download some binaries / package formats and smoke test them, e.g. by
+     - (all platforms) download your architecture from the `bin` folder and run
        it: `up version`.
      - TODO: add more here
    - **note**: You may keep downloading the old version for a while until CDN
      cache is refreshed.
-1. **promote**: Run the `Promote` action on the release branch with the release 
+1. **promote**: Run the `Promote` action on the release branch with the release
    version being the tag name (e.g. `v0.25.0`) and the channel being
    `alpha` or `stable`.
-1. **verify promotion**: Check that https://cli.upbound.io/stable?prefix=stable/v0.25.0/ 
+1. **verify promotion**: Check that https://cli.upbound.io/stable?prefix=stable/v0.25.0/
    has the new version.
-1. **update homebrew**: Run [`Bump Formula`](https://github.com/upbound/homebrew-tap/actions/workflows/bump-formula.yaml) action to open a PR in Homebrew 
+1. **update homebrew**: Run [`Bump Formula`](https://github.com/upbound/homebrew-tap/actions/workflows/bump-formula.yaml) action to open a PR in Homebrew
    for the new version. Get approval and merge.
-1. **release notes**: 
+1. **release notes**:
    - Open the new release tag in https://github.com/upbound/up/tags and click "Create
      release from tag".
    - "Generate release notes" from previous release ("auto" might not work).

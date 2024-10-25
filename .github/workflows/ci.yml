@@ -5,6 +5,8 @@ on:
     branches:
       - main
       - release-*
+    tags:
+      - 'v*'
   pull_request: {}
   workflow_dispatch: {}
 
@@ -265,6 +267,106 @@ jobs:
         with:
           name: output
           path: _output/**
+
+      - name: Create release
+        if: startsWith(github.ref, 'refs/tags/')
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }}
+          release_name: ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+
+      - name: Upload Linux AMD64 schema-generator
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./_output/bin/linux_amd64/schema-generator
+          asset_name: schema-generator-linux-amd64
+          asset_content_type: application/octet-stream
+
+      - name: Upload Linux ARM64 schema-generator
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./_output/bin/linux_arm64/schema-generator
+          asset_name: schema-generator-linux-arm64
+          asset_content_type: application/octet-stream
+
+      - name: Upload Darwin AMD64 schema-generator
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./_output/bin/darwin_amd64/schema-generator
+          asset_name: schema-generator-darwin-amd64
+          asset_content_type: application/octet-stream
+
+      - name: Upload Darwin ARM64 schema-generator
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./_output/bin/darwin_arm64/schema-generator
+          asset_name: schema-generator-darwin-arm64
+          asset_content_type: application/octet-stream
+
+      - name: Upload Linux AMD64 up
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./_output/bin/linux_amd64/up
+          asset_name: up-linux-amd64
+          asset_content_type: application/octet-stream
+
+      - name: Upload Linux ARM64 up
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./_output/bin/linux_arm64/up
+          asset_name: up-linux-arm64
+          asset_content_type: application/octet-stream
+
+      - name: Upload Darwin AMD64 up
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./_output/bin/darwin_amd64/up
+          asset_name: up-darwin-amd64
+          asset_content_type: application/octet-stream
+
+      - name: Upload Darwin ARM64 up
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./_output/bin/darwin_arm64/up
+          asset_name: up-darwin-arm64
+          asset_content_type: application/octet-stream
 
       - name: Login to Docker
         uses: docker/login-action@343f7c4344506bcbf9b4de18042ae17996df046d # v3
