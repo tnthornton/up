@@ -208,7 +208,7 @@ func (c *initCmd) Run(ctx context.Context, upCtx *upbound.Context, p pterm.TextP
 
 	project.ObjectMeta.Name = c.Name
 	if upCtx != nil && upCtx.Account != "" {
-		project.Spec.Repository = fmt.Sprintf("xpkg.upbound.io/%s/%s", upCtx.Account, c.Name)
+		project.Spec.Repository = fmt.Sprintf("%s/%s/%s", upCtx.RegistryEndpoint.Hostname(), upCtx.Account, c.Name)
 	} else {
 		project.Spec.Repository = fmt.Sprintf("xpkg.upbound.io/<YOUR ACCOUNT>/%s", c.Name)
 	}
