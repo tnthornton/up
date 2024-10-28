@@ -367,7 +367,7 @@ func setImageEnvvar(image v1.Image, key string, value string) (v1.Image, error) 
 
 func newKCLBuilder() *kclBuilder {
 	return &kclBuilder{
-		baseImage: "xpkg.upbound.io/awg/function-kcl-base:v0.10.6-1-gf9733e3",
+		baseImage: "xpkg.upbound.io/upbound/function-kcl-base:v0.10.6-2-g7179bcb",
 		transport: http.DefaultTransport,
 	}
 }
