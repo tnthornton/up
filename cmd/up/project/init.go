@@ -210,7 +210,7 @@ func (c *initCmd) Run(ctx context.Context, upCtx *upbound.Context, p pterm.TextP
 	if upCtx != nil && upCtx.Account != "" {
 		project.Spec.Repository = fmt.Sprintf("%s/%s/%s", upCtx.RegistryEndpoint.Hostname(), upCtx.Account, c.Name)
 	} else {
-		project.Spec.Repository = fmt.Sprintf("xpkg.upbound.io/<YOUR ACCOUNT>/%s", c.Name)
+		project.Spec.Repository = fmt.Sprintf("xpkg.upbound.io/<YOUR ORGANIZATION>/%s", c.Name)
 	}
 
 	modifiedProject, err := yaml.Marshal(&project)
