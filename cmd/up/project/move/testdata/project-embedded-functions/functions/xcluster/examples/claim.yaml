@@ -1,0 +1,7 @@
+apiVersion: fake.example.com/v1alpha1
+kind: Example
+metadata:
+  name: fake-example
+  namespace: examples
+spec:
+  field: value
