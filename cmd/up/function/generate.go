@@ -21,7 +21,6 @@ import (
 	"html/template"
 	"io"
 	"path/filepath"
-	"strings"
 
 	"github.com/alecthomas/kong"
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
@@ -93,7 +92,8 @@ type generateCmd struct {
 	Repository      string `optional:"" help:"Repository for the built package. Overrides the repository specified in the project file."`
 	CacheDir        string `short:"d" help:"Directory used for caching dependency images." default:"~/.up/cache/" env:"CACHE_DIR" type:"path"`
 	Language        string `help:"Language for function." default:"kcl" enum:"kcl,python" short:"l"`
-	CompositionPath string `arg:"" help:"Path to Crossplane Composition file."`
+	Name            string `arg:"" required:"" help:"Name for the new Function."`
+	CompositionPath string `arg:"" optional:"" help:"Path to Crossplane Composition file."`
 
 	functionFS        afero.Fs
 	modelsFS          afero.Fs
@@ -129,7 +129,7 @@ func (c *generateCmd) AfterApply(kongCtx *kong.Context, p pterm.TextPrinter) err
 	c.functionFS = afero.NewBasePathFs(
 		c.projFS, filepath.Join(
 			proj.Spec.Paths.Functions,
-			strings.ToLower(filepath.Base(filepath.Dir(c.CompositionPath))),
+			c.Name,
 		),
 	)
 
@@ -179,6 +179,13 @@ func (c *generateCmd) Run(ctx context.Context, p pterm.TextPrinter) error { // n
 	)
 	pterm.EnableStyling()
 
+	if c.CompositionPath != "" {
+		exists, _ := afero.Exists(c.projFS, c.CompositionPath)
+		if !exists {
+			return errors.Errorf("composition file %q does not exist", c.CompositionPath)
+		}
+	}
+
 	isEmpty, err := filesystem.IsFsEmpty(c.functionFS)
 	if err != nil {
 		pterm.Error.Println("Failed to check if the filesystem is empty:", err)
@@ -217,14 +224,9 @@ func (c *generateCmd) Run(ctx context.Context, p pterm.TextPrinter) error { // n
 		return err
 	}
 
-	comp, err := c.readAndUnmarshalComposition()
-	if err != nil {
-		return errors.Wrapf(err, "failed to read composition")
-	}
-
 	switch c.Language {
 	case "kcl":
-		functionSpecificFs, err = c.generateKCLFiles(comp.Spec.CompositeTypeRef.Kind)
+		functionSpecificFs, err = c.generateKCLFiles()
 		if err != nil {
 			return errors.Wrap(err, "failed to handle kcl")
 		}
@@ -261,27 +263,34 @@ func (c *generateCmd) Run(ctx context.Context, p pterm.TextPrinter) error { // n
 		return err
 	}
 
-	err = upterm.WrapWithSuccessSpinner(
-		"Adding Pipeline Step in Composition",
-		upterm.CheckmarkSuccessSpinner,
-		func() error {
-			if err := c.addPipelineStep(comp); err != nil {
-				return errors.Wrap(err, "failed to add pipeline step to composition")
-			}
-			return nil
-		})
-	if err != nil {
-		return err
+	if c.CompositionPath != "" {
+		err = upterm.WrapWithSuccessSpinner(
+			"Adding Pipeline Step in Composition",
+			upterm.CheckmarkSuccessSpinner,
+			func() error {
+				comp, err := c.readAndUnmarshalComposition()
+				if err != nil {
+					return errors.Wrapf(err, "failed to read composition")
+				}
+
+				if err := c.addPipelineStep(comp); err != nil {
+					return errors.Wrap(err, "failed to add pipeline step to composition")
+				}
+				return nil
+			})
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
 }
 
-func (c *generateCmd) generateKCLFiles(outputPath string) (afero.Fs, error) { // nolint:gocyclo
+func (c *generateCmd) generateKCLFiles() (afero.Fs, error) { // nolint:gocyclo
 	targetFS := afero.NewMemMapFs()
 
 	kclModInfo := kclModInfo{
-		Name: outputPath,
+		Name: c.Name,
 	}
 
 	kclModPath := "kcl.mod"
@@ -373,14 +382,14 @@ func generatePythonFiles() (afero.Fs, error) {
 }
 
 func (c *generateCmd) addPipelineStep(comp *v1.Composition) error {
-	fnRepo := fmt.Sprintf("%s_%s", c.projectRepository, strings.ToLower(comp.Spec.CompositeTypeRef.Kind))
+	fnRepo := fmt.Sprintf("%s_%s", c.projectRepository, c.Name)
 	ref, err := name.ParseReference(fnRepo)
 	if err != nil {
 		return errors.Wrapf(err, "error unable to parse the function repo")
 	}
 
 	step := v1.PipelineStep{
-		Step: "compose",
+		Step: c.Name,
 		FunctionRef: v1.FunctionReference{
 			Name: xpkg.ToDNSLabel(ref.Context().RepositoryStr()),
 		},

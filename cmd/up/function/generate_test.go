@@ -58,16 +58,20 @@ func TestGenerateCmd_Run(t *testing.T) {
 		err             error
 	}{
 		"LanguageKcl": {
+			language:      "kcl",
+			expectedFiles: []string{"main.k", "kcl.mod", "kcl.mod.lock"},
+			err:           nil,
+		},
+		"WithCompositionPath": {
 			language:        "kcl",
 			compositionPath: "apis/primitives/XNetwork/composition.yaml",
 			expectedFiles:   []string{"main.k", "kcl.mod", "kcl.mod.lock"},
 			err:             nil,
 		},
 		"LanguagePython": {
-			language:        "python",
-			compositionPath: "apis/primitives/XNetwork/composition.yaml",
-			expectedFiles:   []string{"main.py", "requirements.txt"},
-			err:             nil,
+			language:      "python",
+			expectedFiles: []string{"main.py", "requirements.txt"},
+			err:           nil,
 		},
 	}
 
@@ -92,7 +96,6 @@ func TestGenerateCmd_Run(t *testing.T) {
 			cch, err := cache.NewLocal("/cache", cache.WithFS(outFS))
 			assert.NilError(t, err)
 
-			// Create mock fetcher that holds the images
 			testPkgFS := afero.NewBasePathFs(afero.FromIOFS{FS: packagesFS}, "testdata/packages")
 			testmodelsKclFS := afero.NewBasePathFs(afero.FromIOFS{FS: modelsKclFS}, "testdata/project-embedded-functions/.up")
 			r := image.NewResolver(
@@ -107,7 +110,6 @@ func TestGenerateCmd_Run(t *testing.T) {
 			)
 			assert.NilError(t, err)
 
-			// Construct a workspace from the test filesystem
 			ws, err = workspace.New("/",
 				workspace.WithFS(projFS), // Use the copied projFS here
 				workspace.WithPermissiveParser(),
@@ -127,6 +129,7 @@ func TestGenerateCmd_Run(t *testing.T) {
 				functionFS:        functionFS,
 				Language:          tc.language,
 				CompositionPath:   tc.compositionPath,
+				Name:              "unit-test",
 				projectRepository: "xpkg.upbound.io/awg/getting-started",
 				m:                 mgr,
 				ws:                ws,
@@ -143,21 +146,23 @@ func TestGenerateCmd_Run(t *testing.T) {
 				assert.Assert(t, strings.Contains(err.Error(), tc.err.Error()), "expected error message does not match")
 			}
 
-			compYAML, err := afero.ReadFile(projFS, tc.compositionPath)
-			assert.NilError(t, err)
+			if tc.compositionPath != "" {
+				compYAML, err := afero.ReadFile(projFS, tc.compositionPath)
+				assert.NilError(t, err)
 
-			var comp v1.Composition
-			err = yaml.Unmarshal(compYAML, &comp)
-			assert.NilError(t, err)
+				var comp v1.Composition
+				err = yaml.Unmarshal(compYAML, &comp)
+				assert.NilError(t, err)
 
-			if len(comp.Spec.Pipeline) > 0 {
-				step := comp.Spec.Pipeline[0]
-				fnRepo := fmt.Sprintf("%s_%s", c.projectRepository, strings.ToLower(comp.Spec.CompositeTypeRef.Kind))
-				ref, _ := name.ParseReference(fnRepo)
-				assert.Equal(t, step.Step, "compose", "expected 'compose' step at index 0")
-				assert.Equal(t, step.FunctionRef.Name, xpkg.ToDNSLabel(ref.Context().RepositoryStr()), "unexpected function reference in 'compose' step")
-			} else {
-				t.Error("expected at least one pipeline step, but found none")
+				if len(comp.Spec.Pipeline) > 0 {
+					step := comp.Spec.Pipeline[0]
+					fnRepo := fmt.Sprintf("%s_%s", c.projectRepository, strings.ToLower(c.Name))
+					ref, _ := name.ParseReference(fnRepo)
+					assert.Equal(t, step.Step, c.Name, "expected pipeline step at index 0")
+					assert.Equal(t, step.FunctionRef.Name, xpkg.ToDNSLabel(ref.Context().RepositoryStr()), "unexpected function reference in pipeline step index 0")
+				} else {
+					t.Error("expected at least one pipeline step, but found none")
+				}
 			}
 
 			for _, expectedFile := range tc.expectedFiles {
