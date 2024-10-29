@@ -296,6 +296,14 @@ func TestFindAllBaseFolders(t *testing.T) {
 		expectErr bool
 	}{
 		{
+			name: "NonExistentRootPath",
+			setupFs: func(fs afero.Fs) {
+				// No setup, root path does not exist
+			},
+			expected:  nil, // Expected nil when root path doesn't exist
+			expectErr: false,
+		},
+		{
 			name: "EmptyFileSystem",
 			setupFs: func(fs afero.Fs) {
 				// No setup, empty filesystem

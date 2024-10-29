@@ -56,8 +56,17 @@ const kclModLockTemplate = `[dependencies]
     version = "0.0.1"
 `
 
-const kclMainTemplate = `{{range .Versions}}import models.{{.}} as {{.}}
-{{end}}import models.k8s.apimachinery.pkg.apis.meta.v1 as metav1
+const kclMainTemplate = `{{- if .Versions }}
+{{- range .Versions }}
+import models.{{.}} as {{.}}
+{{- end }}
+import models.k8s.apimachinery.pkg.apis.meta.v1 as metav1
+{{- "\n" }}
+{{- end }}
+oxr = option("params").oxr # observed composite resource
+_ocds = option("params").ocds # observed composed resources
+_dxr = option("params").dxr # desired composite resource
+dcds = option("params").dcds # desired composed resources
 
 _metadata = lambda name: str -> any {
     { annotations = { "krm.kcl.dev/composition-resource-name" = name }}

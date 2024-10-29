@@ -253,6 +253,10 @@ func FindAllBaseFolders(fs afero.Fs, rootPath string) ([]string, error) {
 
 	infos, err := afero.ReadDir(fs, rootPath)
 	if err != nil {
+		if os.IsNotExist(err) {
+			// Return nil, nil if the directory does not exist
+			return nil, nil
+		}
 		return nil, errors.Wrap(err, "failed to read directory")
 	}
 	for _, info := range infos {
