@@ -180,25 +180,9 @@ func (b *realBuilder) Build(ctx context.Context, project *v1alpha1.Project, proj
 	}
 
 	// In parallel:
-	// * Find embedded functions and build their packages.
 	// * Collect APIs (composites).
-	var imgMap ImageTagMap
+	// * Generate schemas for APIs.
 	eg, ctx := errgroup.WithContext(ctx)
-	eg.Go(func() error {
-		statusStage := "Building functions"
-		os.eventChan.SendEvent(statusStage, async.EventStatusStarted)
-		imgs, deps, err := b.buildFunctions(ctx, functionsSource, project)
-		if err != nil {
-			os.eventChan.SendEvent(statusStage, async.EventStatusFailure)
-			return err
-		}
-
-		imgMap = imgs
-		cfg.Spec.DependsOn = append(cfg.Spec.DependsOn, deps...)
-
-		os.eventChan.SendEvent(statusStage, async.EventStatusSuccess)
-		return nil
-	})
 
 	// Collect APIs (composites).
 	var packageFS afero.Fs
@@ -226,7 +210,14 @@ func (b *realBuilder) Build(ctx context.Context, project *v1alpha1.Project, proj
 			mutMu.Lock()
 			mut = append(mut, mutators.NewSchemaMutator(schema.New(kfs, "", xpkg.StreamFileMode), xpkg.SchemaKclAnnotation))
 			mutMu.Unlock()
+
+			if os.depManager != nil {
+				if err := os.depManager.AddModels("kcl", kfs); err != nil {
+					return err
+				}
+			}
 		}
+
 		os.eventChan.SendEvent(statusStage, async.EventStatusSuccess)
 		return nil
 	})
@@ -245,6 +236,11 @@ func (b *realBuilder) Build(ctx context.Context, project *v1alpha1.Project, proj
 			mutMu.Lock()
 			mut = append(mut, mutators.NewSchemaMutator(schema.New(pfs, "", xpkg.StreamFileMode), xpkg.SchemaPythonAnnotation))
 			mutMu.Unlock()
+			if os.depManager != nil {
+				if err := os.depManager.AddModels("python", pfs); err != nil {
+					return err
+				}
+			}
 		}
 
 		os.eventChan.SendEvent(statusStage, async.EventStatusSuccess)
@@ -255,6 +251,19 @@ func (b *realBuilder) Build(ctx context.Context, project *v1alpha1.Project, proj
 	if err != nil {
 		return nil, err
 	}
+
+	// Find and build embedded functions. This has to come after schema
+	// generation because functions may depend on the generated schemas.
+	statusStage = "Building functions"
+	os.eventChan.SendEvent(statusStage, async.EventStatusStarted)
+	imgMap, deps, err := b.buildFunctions(ctx, functionsSource, project)
+	if err != nil {
+		os.eventChan.SendEvent(statusStage, async.EventStatusFailure)
+		return nil, err
+	}
+	// Add embedded function dependencies to the configuration.
+	cfg.Spec.DependsOn = append(cfg.Spec.DependsOn, deps...)
+	os.eventChan.SendEvent(statusStage, async.EventStatusSuccess)
 
 	// Add the package metadata to the collected composites.
 	statusStage = "Building configuration package"
