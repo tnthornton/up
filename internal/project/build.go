@@ -17,6 +17,7 @@ package project
 import (
 	"context"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -30,6 +31,7 @@ import (
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/pkg/errors"
+	"github.com/pterm/pterm"
 	"github.com/spf13/afero"
 	"golang.org/x/sync/errgroup"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -37,6 +39,7 @@ import (
 
 	"github.com/upbound/up/internal/async"
 	"github.com/upbound/up/internal/xpkg"
+	"github.com/upbound/up/internal/xpkg/dep/manager"
 	"github.com/upbound/up/internal/xpkg/functions"
 	"github.com/upbound/up/internal/xpkg/mutators"
 	"github.com/upbound/up/internal/xpkg/parser/examples"
@@ -44,6 +47,7 @@ import (
 	pyaml "github.com/upbound/up/internal/xpkg/parser/yaml"
 	"github.com/upbound/up/internal/xpkg/schemagenerator"
 	"github.com/upbound/up/internal/xpkg/schemarunner"
+	"github.com/upbound/up/internal/xpkg/workspace"
 	"github.com/upbound/up/pkg/apis/project/v1alpha1"
 )
 
@@ -98,6 +102,7 @@ type BuildOption func(o *buildOptions)
 type buildOptions struct {
 	eventChan   async.EventChannel
 	imageLabels map[string]string
+	depManager  *manager.Manager
 }
 
 // BuildWithEventChannel provides a channel to which progress updates will be
@@ -117,6 +122,14 @@ func BuildWithImageLabels(labels map[string]string) BuildOption {
 	}
 }
 
+// BuildWithDependencyManager provides a dependency manager to use for
+// dependency resolution during build.
+func BuildWithDependencyManager(m *manager.Manager) BuildOption {
+	return func(o *buildOptions) {
+		o.depManager = m
+	}
+}
+
 type realBuilder struct {
 	functionIdentifier functions.Identifier
 	schemaRunner       schemarunner.SchemaRunner
@@ -129,6 +142,16 @@ func (b *realBuilder) Build(ctx context.Context, project *v1alpha1.Project, proj
 	for _, opt := range opts {
 		opt(os)
 	}
+
+	// Check that we have all the dependencies in the cache for function
+	// building.
+	statusStage := "Checking dependencies"
+	os.eventChan.SendEvent(statusStage, async.EventStatusStarted)
+	if err := b.checkDependencies(ctx, projectFS, os.depManager); err != nil {
+		os.eventChan.SendEvent(statusStage, async.EventStatusFailure)
+		return nil, err
+	}
+	os.eventChan.SendEvent(statusStage, async.EventStatusSuccess)
 
 	// Scaffold a configuration based on the metadata in the project. Later
 	// we'll add any embedded functions we build to the dependencies.
@@ -234,7 +257,7 @@ func (b *realBuilder) Build(ctx context.Context, project *v1alpha1.Project, proj
 	}
 
 	// Add the package metadata to the collected composites.
-	statusStage := "Building configuration package"
+	statusStage = "Building configuration package"
 	os.eventChan.SendEvent(statusStage, async.EventStatusStarted)
 	defer func() {
 		if err != nil {
@@ -291,6 +314,33 @@ func (b *realBuilder) Build(ctx context.Context, project *v1alpha1.Project, proj
 	imgMap[imgTag] = img
 
 	return imgMap, nil
+}
+
+func (b *realBuilder) checkDependencies(ctx context.Context, projectFS afero.Fs, m *manager.Manager) error {
+	ws, err := workspace.New("/",
+		workspace.WithFS(projectFS),
+		// The user doesn't care about workspace warnings during build.
+		workspace.WithPrinter(&pterm.BasicTextPrinter{Writer: io.Discard}),
+		workspace.WithPermissiveParser(),
+	)
+	if err != nil {
+		return errors.Wrap(err, "failed to create workspace")
+	}
+	if err := ws.Parse(ctx); err != nil {
+		return errors.Wrap(err, "failed to parse workspace")
+	}
+	deps, err := ws.View().Meta().DependsOn()
+	if err != nil {
+		return errors.Wrap(err, "failed to get dependencies")
+	}
+	for _, dep := range deps {
+		_, _, err := m.AddAll(ctx, dep)
+		if err != nil {
+			return errors.Wrapf(err, "failed to check dependency %q", dep.Package)
+		}
+	}
+
+	return nil
 }
 
 // buildFunctions builds the embedded functions found in directories at the top

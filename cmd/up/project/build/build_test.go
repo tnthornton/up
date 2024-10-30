@@ -46,7 +46,6 @@ import (
 	xpkgmarshaler "github.com/upbound/up/internal/xpkg/dep/marshaler/xpkg"
 	"github.com/upbound/up/internal/xpkg/dep/resolver/image"
 	"github.com/upbound/up/internal/xpkg/functions"
-	"github.com/upbound/up/internal/xpkg/workspace"
 	"github.com/upbound/up/pkg/apis/project/v1alpha1"
 )
 
@@ -169,11 +168,6 @@ func TestBuild(t *testing.T) {
 			outFS := afero.NewMemMapFs()
 			mockRunner := MockSchemaRunner{}
 
-			ws, err := workspace.New("/", workspace.WithFS(outFS), workspace.WithPermissiveParser())
-			assert.NilError(t, err)
-			err = ws.Parse(context.Background())
-			assert.NilError(t, err)
-
 			cch, err := cache.NewLocal("/cache", cache.WithFS(outFS))
 			assert.NilError(t, err)
 
@@ -192,15 +186,6 @@ func TestBuild(t *testing.T) {
 			)
 			assert.NilError(t, err)
 
-			// Construct a workspace from the test filesystem.
-			ws, err = workspace.New("/",
-				workspace.WithFS(tc.projFS),
-				workspace.WithPermissiveParser(),
-			)
-			assert.NilError(t, err)
-			err = ws.Parse(context.Background())
-			assert.NilError(t, err)
-
 			c := &Cmd{
 				ProjectFile:  "upbound.yaml",
 				OutputDir:    "_output",
@@ -211,8 +196,7 @@ func TestBuild(t *testing.T) {
 				functionIdentifier: functions.FakeIdentifier,
 				schemaRunner:       mockRunner,
 
-				m:  mgr,
-				ws: ws,
+				m: mgr,
 			}
 
 			// Parse the upbound.yaml from the example so we can validate that certain

@@ -17,7 +17,6 @@ package build
 import (
 	"context"
 	"fmt"
-	"io"
 	"path/filepath"
 	"reflect"
 
@@ -37,7 +36,6 @@ import (
 	"github.com/upbound/up/internal/xpkg/dep/resolver/image"
 	"github.com/upbound/up/internal/xpkg/functions"
 	"github.com/upbound/up/internal/xpkg/schemarunner"
-	"github.com/upbound/up/internal/xpkg/workspace"
 
 	"github.com/upbound/up/pkg/apis/project/v1alpha1"
 )
@@ -58,8 +56,7 @@ type Cmd struct {
 	functionIdentifier functions.Identifier
 	schemaRunner       schemarunner.SchemaRunner
 
-	m  *manager.Manager
-	ws *workspace.Workspace
+	m *manager.Manager
 }
 
 func (c *Cmd) AfterApply(kongCtx *kong.Context, p pterm.TextPrinter) error {
@@ -99,21 +96,6 @@ func (c *Cmd) AfterApply(kongCtx *kong.Context, p pterm.TextPrinter) error {
 	}
 
 	c.m = m
-
-	ws, err := workspace.New("/",
-		workspace.WithFS(c.projFS),
-		// The user doesn't care about workspace warnings during build.
-		workspace.WithPrinter(&pterm.BasicTextPrinter{Writer: io.Discard}),
-		workspace.WithPermissiveParser(),
-	)
-	if err != nil {
-		return err
-	}
-	c.ws = ws
-
-	if err := ws.Parse(ctx); err != nil {
-		return err
-	}
 
 	// workaround interfaces not being bindable ref: https://github.com/alecthomas/kong/issues/48
 	kongCtx.BindTo(ctx, (*context.Context)(nil))
@@ -168,6 +150,7 @@ func (c *Cmd) Run(ctx context.Context, p pterm.TextPrinter) error { //nolint:goc
 		imgMap, err = b.Build(ctx, proj, c.projFS,
 			project.BuildWithEventChannel(ch),
 			project.BuildWithImageLabels(c.imageLabels()),
+			project.BuildWithDependencyManager(c.m),
 		)
 		return err
 	})
