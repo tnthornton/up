@@ -21,6 +21,7 @@ import (
 	"html/template"
 	"io"
 	"path/filepath"
+	"strings"
 
 	"github.com/alecthomas/kong"
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
@@ -28,6 +29,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/pterm/pterm"
 	"github.com/spf13/afero"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/yaml"
 
 	icrd "github.com/upbound/up/internal/crd"
@@ -187,6 +189,10 @@ func (c *generateCmd) Run(ctx context.Context, p pterm.TextPrinter) error { // n
 		functionSpecificFs = afero.NewBasePathFs(afero.NewOsFs(), ".")
 	)
 	pterm.EnableStyling()
+
+	if errs := validation.IsDNS1035Label(c.Name); len(errs) > 0 {
+		return errors.Errorf("'%s' is not a valid function name. DNS-1035 constraints: %s", c.Name, strings.Join(errs, "; "))
+	}
 
 	if c.CompositionPath != "" {
 		exists, _ := afero.Exists(c.projFS, c.CompositionPath)

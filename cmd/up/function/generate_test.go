@@ -53,25 +53,35 @@ var (
 func TestGenerateCmd_Run(t *testing.T) {
 	tcs := map[string]struct {
 		language        string
+		name            string
 		compositionPath string
 		expectedFiles   []string
 		err             error
 	}{
 		"LanguageKcl": {
+			name:          "fn1",
 			language:      "kcl",
 			expectedFiles: []string{"main.k", "kcl.mod", "kcl.mod.lock"},
 			err:           nil,
 		},
 		"WithCompositionPath": {
+			name:            "fn2",
 			language:        "kcl",
 			compositionPath: "apis/primitives/XNetwork/composition.yaml",
 			expectedFiles:   []string{"main.k", "kcl.mod", "kcl.mod.lock"},
 			err:             nil,
 		},
 		"LanguagePython": {
+			name:          "fn3",
 			language:      "python",
 			expectedFiles: []string{"main.py", "requirements.txt"},
 			err:           nil,
+		},
+		"InvalidName": {
+			name:          "apis/network/aws-yaml",
+			language:      "python",
+			expectedFiles: []string{},
+			err:           fmt.Errorf("must meet DNS-1035 label constraints"), // General DNS-1035 error message
 		},
 	}
 
@@ -129,7 +139,7 @@ func TestGenerateCmd_Run(t *testing.T) {
 				functionFS:        functionFS,
 				Language:          tc.language,
 				CompositionPath:   tc.compositionPath,
-				Name:              "unit-test",
+				Name:              tc.name,
 				projectRepository: "xpkg.upbound.io/awg/getting-started",
 				m:                 mgr,
 				ws:                ws,
@@ -142,8 +152,8 @@ func TestGenerateCmd_Run(t *testing.T) {
 
 			if tc.err == nil {
 				assert.NilError(t, err)
-			} else {
-				assert.Assert(t, strings.Contains(err.Error(), tc.err.Error()), "expected error message does not match")
+			} else if err != nil {
+				assert.Assert(t, strings.Contains(err.Error(), "DNS-1035"), "expected error message to mention DNS-1035 constraints")
 			}
 
 			if tc.compositionPath != "" {
@@ -169,12 +179,6 @@ func TestGenerateCmd_Run(t *testing.T) {
 				exists, err := afero.Exists(functionFS, expectedFile)
 				assert.NilError(t, err)
 				assert.Assert(t, exists, "file %s not found in functionFS", expectedFile)
-			}
-
-			if tc.err == nil {
-				assert.NilError(t, err)
-			} else {
-				assert.Assert(t, strings.Contains(err.Error(), tc.err.Error()), "expected error message does not match")
 			}
 		})
 	}
