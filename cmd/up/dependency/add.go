@@ -32,6 +32,28 @@ import (
 	"github.com/upbound/up/internal/xpkg/workspace"
 )
 
+func (c *addCmd) Help() string {
+	return `
+The 'add' command retrieves a Crossplane package (provider, configuration, or function) from a specified registry with an optional version tag and adds it to a project as a dependency.
+
+Examples:
+    dependency add xpkg.upbound.io/upbound/provider-aws-eks
+        Retrieves the provider, adds all CRDs to the cache folder,
+		and places all language schemas in the repository root .up/ folder.
+		Uses the latest available package.
+
+    dependency add 'xpkg.upbound.io/upbound/platform-ref-aws:>v1.1.0'
+        Retrieves the configuration, adds all XRDs to the cache folder,
+		and places all language schemas in the repository root .up/ folder.
+		Uses a package version greater than v1.1.0.
+
+    dependency add 'xpkg.upbound.io/crossplane-contrib/function-kcl:>=v0.10.8'
+        Retrieves the function, adds all CRDs to the cache folder,
+		and places all language schemas in the repository root .up/ folder.
+		Uses a package version v0.10.8 or newer, if available.
+`
+}
+
 // addCmd manages crossplane dependencies.
 type addCmd struct {
 	m        *manager.Manager
