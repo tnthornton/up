@@ -46,6 +46,10 @@ func TestReorganizeAndAdjustImports(t *testing.T) {
 				afero.WriteFile(fs, pythonGeneratedFolder+"/platform_acme_co_v1alpha1_compositecluster/io/k8s/apimachinery/pkg/apis/meta/__init__.py", []byte(""), os.ModePerm)
 				afero.WriteFile(fs, pythonGeneratedFolder+"/platform_acme_co_v1alpha1_compositecluster/co/acme/platform/v1alpha1.py", []byte("from ....io.k8s.apimachinery.pkg.apis.meta import v1"), os.ModePerm)
 				afero.WriteFile(fs, pythonGeneratedFolder+"/platform_acme_co_v1alpha1_compositecluster/co/acme/platform/__init__.py", []byte(""), os.ModePerm)
+				afero.WriteFile(fs, pythonGeneratedFolder+"/eks_aws_upbound_io_v1beta1_accessentry/io/k8s/apimachinery/pkg/apis/meta/v1.py", []byte("from __future__ import annotations"), os.ModePerm)
+				afero.WriteFile(fs, pythonGeneratedFolder+"/eks_aws_upbound_io_v1beta1_accessentry/io/k8s/apimachinery/pkg/apis/meta/__init__.py", []byte(""), os.ModePerm)
+				afero.WriteFile(fs, pythonGeneratedFolder+"/eks_aws_upbound_io_v1beta1_accessentry/io/upbound/aws/eks/accessentry/v1beta1.py", []byte("from ....k8s.apimachinery.pkg.apis.meta import v1"), os.ModePerm)
+				afero.WriteFile(fs, pythonGeneratedFolder+"/eks_aws_upbound_io_v1beta1_accessentry/io/upbound/aws/eks/accessentry/__init__.py", []byte(""), os.ModePerm)
 			},
 			sourceDir: pythonGeneratedFolder,
 			targetDir: pythonAdoptModelsStructure,
@@ -56,6 +60,8 @@ func TestReorganizeAndAdjustImports(t *testing.T) {
 				pythonAdoptModelsStructure + "/co/acme/platform/subnetwork/__init__.py":       "",
 				pythonAdoptModelsStructure + "/co/acme/platform/compositecluster/v1alpha1.py": "from .....io.k8s.apimachinery.pkg.apis.meta import v1",
 				pythonAdoptModelsStructure + "/co/acme/platform/compositecluster/__init__.py": "",
+				pythonAdoptModelsStructure + "/io/upbound/aws/eks/accessentry/v1beta1.py":     "from .....k8s.apimachinery.pkg.apis.meta import v1",
+				pythonAdoptModelsStructure + "/io/upbound/aws/eks/accessentry/__init__.py":    "",
 			},
 			expectedErrors: false,
 		},
@@ -101,6 +107,12 @@ func TestAdjustLeadingDots(t *testing.T) {
 			expected:   "from io.k8s.apimachinery.pkg.apis.meta import v1",
 		},
 		{
+			name:       "NoAdjustmentNeededWithoutIo",
+			importLine: "from k8s.apimachinery.pkg.apis.meta import v1",
+			depth:      0,
+			expected:   "from k8s.apimachinery.pkg.apis.meta import v1",
+		},
+		{
 			name:       "OneLevelDeep",
 			importLine: "from ..io.k8s.apimachinery.pkg.apis.meta import v1",
 			depth:      1,
@@ -117,6 +129,18 @@ func TestAdjustLeadingDots(t *testing.T) {
 			importLine: "from ......io.k8s.apimachinery.pkg.apis.meta import v1",
 			depth:      2,
 			expected:   "from ..io.k8s.apimachinery.pkg.apis.meta import v1",
+		},
+		{
+			name:       "AlreadyContainsLeadingDotsWithoutIo",
+			importLine: "from ......k8s.apimachinery.pkg.apis.meta import v1",
+			depth:      2,
+			expected:   "from .k8s.apimachinery.pkg.apis.meta import v1",
+		},
+		{
+			name:       "ImportInsideIoFolder",
+			importLine: "from ....k8s.apimachinery.pkg.apis.meta import v1",
+			depth:      6,
+			expected:   "from .....k8s.apimachinery.pkg.apis.meta import v1",
 		},
 		{
 			name:       "NonMatchingImport",

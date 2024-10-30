@@ -325,8 +325,8 @@ func adjustImportsInFile(fs afero.Fs, filePath string) error {
 	scanner := bufio.NewScanner(strings.NewReader(string(fileContent)))
 	for scanner.Scan() {
 		line := scanner.Text()
-		// Adjust imports that contain `io.k8s.apimachinery.pkg.apis.meta`
-		if strings.Contains(line, "io.k8s.apimachinery.pkg.apis.meta") {
+		// Adjust imports that contain `k8s.apimachinery.pkg.apis.meta`
+		if strings.Contains(line, "k8s.apimachinery.pkg.apis.meta") {
 			line = adjustLeadingDots(line, depth)
 		}
 		modifiedContent = append(modifiedContent, line)
@@ -343,16 +343,30 @@ func adjustImportsInFile(fs afero.Fs, filePath string) error {
 // Adjusts the number of leading dots in the `io.k8s.apimachinery.pkg.apis.meta` import statement
 // based on the file's depth
 func adjustLeadingDots(importLine string, depth int) string {
-	// Add the correct number of leading dots based on depth
-	dotPart := strings.Repeat(".", depth)
-
-	// Find the import statement containing `io.k8s.apimachinery.pkg.apis.meta` and remove any existing leading dots
+	dotPart := ""
+	// Check for either `io.k8s.apimachinery.pkg.apis.meta` or `k8s.apimachinery.pkg.apis.meta`
+	var basePath string
 	if strings.Contains(importLine, "io.k8s.apimachinery.pkg.apis.meta") {
-		// Split the line into parts: the leading dots + the import path
-		parts := strings.SplitN(importLine, "io.k8s.apimachinery.pkg.apis.meta", 2)
+		basePath = "io.k8s.apimachinery.pkg.apis.meta"
+		// Add the correct number of leading dots based on depth
+		dotPart = strings.Repeat(".", depth)
+	} else if strings.Contains(importLine, "k8s.apimachinery.pkg.apis.meta") {
+		basePath = "k8s.apimachinery.pkg.apis.meta"
+		// Add the correct number of leading dots based on depth - 1 because "io" is same base-folder
+		if depth > 1 {
+			dotPart = strings.Repeat(".", depth-1)
+		} else {
+			dotPart = ""
+		}
+	}
 
-		// Ensure the first part (before `io.k8s.apimachinery.pkg.apis.meta`) is correctly replaced by the calculated dots
-		return "from " + dotPart + "io.k8s.apimachinery.pkg.apis.meta" + parts[1]
+	// Process the line if a valid base path is found
+	if basePath != "" {
+		// Split the line into parts: the leading dots + the import path
+		parts := strings.SplitN(importLine, basePath, 2)
+
+		// Construct the new line with the correct leading dots
+		return "from " + dotPart + basePath + parts[1]
 	}
 
 	return importLine
