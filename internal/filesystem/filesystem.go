@@ -65,14 +65,53 @@ func CopyFilesBetweenFs(fromFS, toFS afero.Fs) error {
 	return err
 }
 
-func FSToTar(f afero.Fs, prefix string, osBasePath *string) ([]byte, error) { // nolint:gocyclo
+type fsToTarConfig struct {
+	symlinkBasePath *string
+	uidOverride     *int
+	gidOverride     *int
+}
+
+type FSToTarOption func(*fsToTarConfig)
+
+func WithSymlinkBasePath(bp string) FSToTarOption {
+	return func(opts *fsToTarConfig) {
+		opts.symlinkBasePath = &bp
+	}
+}
+
+func WithUIDOverride(uid int) FSToTarOption {
+	return func(opts *fsToTarConfig) {
+		opts.uidOverride = &uid
+	}
+}
+
+func WithGIDOverride(gid int) FSToTarOption {
+	return func(opts *fsToTarConfig) {
+		opts.gidOverride = &gid
+	}
+}
+
+func FSToTar(f afero.Fs, prefix string, opts ...FSToTarOption) ([]byte, error) { // nolint:gocyclo
+	cfg := &fsToTarConfig{}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
-	err := tw.WriteHeader(&tar.Header{
+	prefixHdr := &tar.Header{
 		Name:     prefix,
 		Typeflag: tar.TypeDir,
 		Mode:     0777,
-	})
+	}
+	if cfg.uidOverride != nil {
+		prefixHdr.Uid = *cfg.uidOverride
+	}
+	if cfg.gidOverride != nil {
+		prefixHdr.Gid = *cfg.gidOverride
+	}
+
+	err := tw.WriteHeader(prefixHdr)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create prefix directory in tar archive")
 	}
@@ -81,13 +120,31 @@ func FSToTar(f afero.Fs, prefix string, osBasePath *string) ([]byte, error) { //
 			return err
 		}
 		if info.IsDir() {
+			h, err := tar.FileInfoHeader(info, "")
+			if err != nil {
+				return err
+			}
+			h.Name = filepath.Join(prefix, name)
+			if cfg.uidOverride != nil {
+				h.Uid = *cfg.uidOverride
+			}
+			if cfg.gidOverride != nil {
+				h.Gid = *cfg.gidOverride
+			}
+			if err := tw.WriteHeader(h); err != nil {
+				return err
+			}
 			return nil
 		}
 
 		if info.Mode()&os.ModeSymlink != 0 {
+			if cfg.symlinkBasePath == nil {
+				return errors.New("cannot follow symlinks unless base path is configured")
+			}
+
 			// Handle symlink by using afero.OsFs to resolve it
 			osFs := afero.NewOsFs()
-			symlinkBasePath := filepath.Join(*osBasePath, name)
+			symlinkBasePath := filepath.Join(*cfg.symlinkBasePath, name)
 
 			// Since symlink points outside BasePathFs, use osFs to resolve it
 			targetPath, err := filepath.EvalSymlinks(symlinkBasePath)
@@ -123,6 +180,12 @@ func FSToTar(f afero.Fs, prefix string, osBasePath *string) ([]byte, error) { //
 					return err
 				}
 				targetHeader.Name = filepath.Join(prefix, name, relativePath)
+				if cfg.uidOverride != nil {
+					targetHeader.Uid = *cfg.uidOverride
+				}
+				if cfg.gidOverride != nil {
+					targetHeader.Gid = *cfg.gidOverride
+				}
 
 				if err := tw.WriteHeader(targetHeader); err != nil {
 					return err
@@ -143,6 +206,12 @@ func FSToTar(f afero.Fs, prefix string, osBasePath *string) ([]byte, error) { //
 				return err
 			}
 			h.Name = filepath.Join(prefix, name)
+			if cfg.uidOverride != nil {
+				h.Uid = *cfg.uidOverride
+			}
+			if cfg.gidOverride != nil {
+				h.Gid = *cfg.gidOverride
+			}
 			if err := tw.WriteHeader(h); err != nil {
 				return err
 			}

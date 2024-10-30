@@ -25,6 +25,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type fileInfo struct {
+	mode int64
+	uid  int
+	gid  int
+}
+
 func TestFSToTar(t *testing.T) {
 	// Helper function to read the contents of a TAR file.
 	readTar := func(tarData []byte) map[string]*tar.Header {
@@ -45,8 +51,9 @@ func TestFSToTar(t *testing.T) {
 		name          string
 		setupFs       func(fs afero.Fs)
 		prefix        string
+		opts          []FSToTarOption
 		expectErr     bool
-		expectedFiles map[string]int64 // File paths and their expected modes
+		expectedFiles map[string]fileInfo
 	}{
 		{
 			name: "SimpleFileTarWithPrefix",
@@ -55,9 +62,9 @@ func TestFSToTar(t *testing.T) {
 				afero.WriteFile(fs, "file.txt", []byte("test content"), os.ModePerm)
 			},
 			prefix: "my-prefix/",
-			expectedFiles: map[string]int64{
-				"my-prefix/":         0,
-				"my-prefix/file.txt": 0777,
+			expectedFiles: map[string]fileInfo{
+				"my-prefix/":         {mode: 0777},
+				"my-prefix/file.txt": {mode: 0777},
 			},
 		},
 		{
@@ -67,8 +74,8 @@ func TestFSToTar(t *testing.T) {
 				fs.Mkdir("dir", os.ModePerm)
 			},
 			prefix: "my-prefix/",
-			expectedFiles: map[string]int64{
-				"my-prefix/": 0, // Only prefix should exist, no dir should be included.
+			expectedFiles: map[string]fileInfo{
+				"my-prefix/": {mode: 0777}, // Only prefix should exist, no dir should be included.
 			},
 		},
 		{
@@ -79,10 +86,44 @@ func TestFSToTar(t *testing.T) {
 				afero.WriteFile(fs, "file2.txt", []byte("test content 2"), os.ModePerm)
 			},
 			prefix: "another-prefix/",
-			expectedFiles: map[string]int64{
-				"another-prefix/":          0,
-				"another-prefix/file1.txt": 0777,
-				"another-prefix/file2.txt": 0777,
+			expectedFiles: map[string]fileInfo{
+				"another-prefix/":          {mode: 0777},
+				"another-prefix/file1.txt": {mode: 0777},
+				"another-prefix/file2.txt": {mode: 0777},
+			},
+		},
+		{
+			name: "UIDOverride",
+			setupFs: func(fs afero.Fs) {
+				// Create multiple files in the in-memory file system.
+				afero.WriteFile(fs, "file1.txt", []byte("test content 1"), os.ModePerm)
+				afero.WriteFile(fs, "file2.txt", []byte("test content 2"), os.ModePerm)
+			},
+			prefix: "my-prefix/",
+			opts: []FSToTarOption{
+				WithUIDOverride(2345),
+			},
+			expectedFiles: map[string]fileInfo{
+				"my-prefix/":          {mode: 0777, uid: 2345},
+				"my-prefix/file1.txt": {mode: 0777, uid: 2345},
+				"my-prefix/file2.txt": {mode: 0777, uid: 2345},
+			},
+		},
+		{
+			name: "GIDOverride",
+			setupFs: func(fs afero.Fs) {
+				// Create multiple files in the in-memory file system.
+				afero.WriteFile(fs, "file1.txt", []byte("test content 1"), os.ModePerm)
+				afero.WriteFile(fs, "file2.txt", []byte("test content 2"), os.ModePerm)
+			},
+			prefix: "my-prefix/",
+			opts: []FSToTarOption{
+				WithGIDOverride(2345),
+			},
+			expectedFiles: map[string]fileInfo{
+				"my-prefix/":          {mode: 0777, gid: 2345},
+				"my-prefix/file1.txt": {mode: 0777, gid: 2345},
+				"my-prefix/file2.txt": {mode: 0777, gid: 2345},
 			},
 		},
 	}
@@ -96,7 +137,7 @@ func TestFSToTar(t *testing.T) {
 			tt.setupFs(fs)
 
 			// Run the FSToTar function.
-			tarData, err := FSToTar(fs, tt.prefix, nil)
+			tarData, err := FSToTar(fs, tt.prefix, tt.opts...)
 
 			// Validate errors if expected.
 			if tt.expectErr {
@@ -110,14 +151,13 @@ func TestFSToTar(t *testing.T) {
 			files := readTar(tarData)
 
 			// Validate that the correct files were included.
-			for expectedFile, expectedMode := range tt.expectedFiles {
+			for expectedFile, expectedInfo := range tt.expectedFiles {
 				file, ok := files[expectedFile]
 				require.True(t, ok, "%s not found in tar", expectedFile)
 
-				// Only validate the mode if it's a file (non-directory).
-				if expectedMode != 0 {
-					require.Equal(t, expectedMode, file.Mode, "Incorrect file mode for %s", expectedFile)
-				}
+				require.Equal(t, expectedInfo.mode, file.Mode, "Incorrect file mode for %s", expectedFile)
+				require.Equal(t, expectedInfo.uid, file.Uid, "Incorrect UID for %s", expectedFile)
+				require.Equal(t, expectedInfo.gid, file.Gid, "Incorrect GID for %s", expectedFile)
 			}
 		})
 	}

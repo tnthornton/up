@@ -33,7 +33,6 @@ import (
 	"github.com/spf13/afero"
 	"golang.org/x/sync/errgroup"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/yaml"
 
 	"github.com/upbound/up/internal/async"
@@ -441,9 +440,9 @@ func (b *realBuilder) buildFunction(ctx context.Context, fromFS afero.Fs, projec
 	// Resolve the real absolute path to the function directory if
 	// possible. This is required for following symlinks in the function
 	// directory.
-	var osBasePath *string
+	var osBasePath string
 	if bfs, ok := fromFS.(*afero.BasePathFs); ok {
-		osBasePath = ptr.To(afero.FullBaseFsPath(bfs, "."))
+		osBasePath = afero.FullBaseFsPath(bfs, ".")
 	}
 
 	runtimeImages, err := fnBuilder.Build(ctx, fromFS, project.Spec.Architectures, osBasePath)

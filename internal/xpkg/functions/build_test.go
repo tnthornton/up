@@ -148,7 +148,7 @@ func TestKCLBuild(t *testing.T) {
 		afero.FromIOFS{FS: kclFunction},
 		"testdata/kcl-function",
 	)
-	fnImgs, err := b.Build(context.Background(), fromFS, []string{"amd64"}, nil)
+	fnImgs, err := b.Build(context.Background(), fromFS, []string{"amd64"}, "/")
 	assert.NilError(t, err)
 	assert.Assert(t, cmp.Len(fnImgs, 1))
 	fnImg := fnImgs[0]
@@ -222,7 +222,7 @@ func TestPythonBuild(t *testing.T) {
 		afero.FromIOFS{FS: pythonFunction},
 		"testdata/python-function",
 	)
-	fnImgs, err := b.Build(context.Background(), fromFS, []string{"amd64"}, nil)
+	fnImgs, err := b.Build(context.Background(), fromFS, []string{"amd64"}, "/")
 	assert.NilError(t, err)
 	assert.Assert(t, cmp.Len(fnImgs, 1))
 	fnImg := fnImgs[0]

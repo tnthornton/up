@@ -41,7 +41,9 @@ import (
 )
 
 const (
-	errNoSuitableBuilder = "no suitable builder found"
+	errNoSuitableBuilder        = "no suitable builder found"
+	crossplaneFunctionRunnerUID = 2000
+	crossplaneFunctionRunnerGID = 2000
 )
 
 // Identifier knows how to identify an appropriate builder for a function based
@@ -96,7 +98,7 @@ type Builder interface {
 	// Build builds the function whose source lives in the given filesystem,
 	// returning an image for each architecture. This image will *not* include
 	// package metadata; it's just the runtime image for the function.
-	Build(ctx context.Context, fromFS afero.Fs, architectures []string, osBasePath *string) ([]v1.Image, error)
+	Build(ctx context.Context, fromFS afero.Fs, architectures []string, osBasePath string) ([]v1.Image, error)
 
 	// match returns true if this builder can build the function whose source
 	// lives in the given filesystem.
@@ -115,14 +117,14 @@ func (b *dockerBuilder) match(fromFS afero.Fs) (bool, error) {
 	return afero.Exists(fromFS, "Dockerfile")
 }
 
-func (b *dockerBuilder) Build(ctx context.Context, fromFS afero.Fs, architectures []string, osBasePath *string) ([]v1.Image, error) {
+func (b *dockerBuilder) Build(ctx context.Context, fromFS afero.Fs, architectures []string, osBasePath string) ([]v1.Image, error) {
 	cl, err := client.NewClientWithOpts(client.WithAPIVersionNegotiation())
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to connect to docker daemon")
 	}
 
 	// Collect build context to send to the docker daemon.
-	contextTar, err := filesystem.FSToTar(fromFS, "/", nil)
+	contextTar, err := filesystem.FSToTar(fromFS, "/")
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to construct docker context")
 	}
@@ -179,7 +181,7 @@ func (b *kclBuilder) match(fromFS afero.Fs) (bool, error) {
 	return afero.Exists(fromFS, "kcl.mod")
 }
 
-func (b *kclBuilder) Build(ctx context.Context, fromFS afero.Fs, architectures []string, osBasePath *string) ([]v1.Image, error) {
+func (b *kclBuilder) Build(ctx context.Context, fromFS afero.Fs, architectures []string, osBasePath string) ([]v1.Image, error) {
 	baseRef, err := name.NewTag(b.baseImage)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to parse KCL base image tag")
@@ -194,7 +196,15 @@ func (b *kclBuilder) Build(ctx context.Context, fromFS afero.Fs, architectures [
 				return errors.Wrap(err, "failed to fetch KCL base image")
 			}
 
-			src, err := filesystem.FSToTar(fromFS, "/src", osBasePath)
+			src, err := filesystem.FSToTar(fromFS, "/src",
+				filesystem.WithSymlinkBasePath(osBasePath),
+				// The KCL base function implementation requires that the source
+				// files (specifically, the kcl.mod.lock) be writable. Make them
+				// owned by the UID/GID that crossplane uses to run function
+				// pods.
+				filesystem.WithUIDOverride(crossplaneFunctionRunnerUID),
+				filesystem.WithGIDOverride(crossplaneFunctionRunnerGID),
+			)
 			if err != nil {
 				return errors.Wrap(err, "failed to tar layer contents")
 			}
@@ -242,7 +252,7 @@ func (b *pythonBuilder) match(fromFS afero.Fs) (bool, error) {
 	return afero.Exists(fromFS, "main.py")
 }
 
-func (b *pythonBuilder) Build(ctx context.Context, fromFS afero.Fs, architectures []string, osBasePath *string) ([]v1.Image, error) {
+func (b *pythonBuilder) Build(ctx context.Context, fromFS afero.Fs, architectures []string, osBasePath string) ([]v1.Image, error) {
 	baseRef, err := name.NewTag(b.baseImage)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to parse python base image tag")
@@ -260,7 +270,9 @@ func (b *pythonBuilder) Build(ctx context.Context, fromFS afero.Fs, architecture
 				return errors.Wrap(err, "failed to fetch python base image")
 			}
 
-			src, err := filesystem.FSToTar(fromFS, b.packagePath, osBasePath)
+			src, err := filesystem.FSToTar(fromFS, b.packagePath,
+				filesystem.WithSymlinkBasePath(osBasePath),
+			)
 			if err != nil {
 				return errors.Wrap(err, "failed to tar layer contents")
 			}
@@ -316,6 +328,7 @@ func baseImageForArch(ref name.Reference, arch string, transport http.RoundTripp
 	// The RootFS contains a list of layers; since we're removing layers we need
 	// to clear it out. It will be rebuilt by the mutate package.
 	cfg.RootFS = v1.RootFS{}
+	cfg.History = nil
 	baseImage, err = mutate.ConfigFile(baseImage, cfg)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to add configuration to base image")
@@ -396,7 +409,7 @@ func (b *fakeBuilder) match(fromFS afero.Fs) (bool, error) {
 	return true, nil
 }
 
-func (b *fakeBuilder) Build(ctx context.Context, fromFS afero.Fs, architectures []string, osBasePath *string) ([]v1.Image, error) {
+func (b *fakeBuilder) Build(ctx context.Context, fromFS afero.Fs, architectures []string, osBasePath string) ([]v1.Image, error) {
 	images := make([]v1.Image, len(architectures))
 	for i, arch := range architectures {
 		baseImg := empty.Image

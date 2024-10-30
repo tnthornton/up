@@ -39,7 +39,7 @@ func TestDockerBuild(t *testing.T) {
 		"testdata/docker-function",
 	)
 
-	fnImgs, err := b.Build(context.Background(), fromFS, []string{"amd64"}, nil)
+	fnImgs, err := b.Build(context.Background(), fromFS, []string{"amd64"}, "/")
 	assert.NilError(t, err)
 	assert.Assert(t, cmp.Len(fnImgs, 1))
 	fnImg := fnImgs[0]

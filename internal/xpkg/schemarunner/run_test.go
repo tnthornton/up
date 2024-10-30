@@ -139,7 +139,7 @@ func TestCreateTarFromFs(t *testing.T) {
 			fs := tc.args.fs()
 
 			// Attempt to create the tar
-			tarBuffer, err := filesystem.FSToTar(fs, tc.args.baseFolder, nil)
+			tarBuffer, err := filesystem.FSToTar(fs, tc.args.baseFolder)
 
 			// Check tar creation success using only len check
 			tarFileExists := len(tarBuffer) > 0
