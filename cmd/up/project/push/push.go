@@ -39,7 +39,6 @@ type Cmd struct {
 	Repository     string        `optional:"" help:"Repository to push to. Overrides the repository specified in the project file."`
 	Tag            string        `short:"t" help:"Tag for the built package. If not provided, a semver tag will be generated." default:""`
 	PackageFile    string        `optional:"" help:"Package file to push. Discovered by default based on repository and tag."`
-	Create         bool          `help:"Create the configuration repository before pushing if it does not exist. Function sub-repositories will always be created automatically."`
 	MaxConcurrency uint          `help:"Maximum number of functions to build at once." env:"UP_MAX_CONCURRENCY" default:"8"`
 	Flags          upbound.Flags `embed:""`
 
@@ -120,7 +119,6 @@ func (c *Cmd) Run(ctx context.Context, upCtx *upbound.Context, p pterm.TextPrint
 
 	err = async.WrapWithSuccessSpinners(func(ch async.EventChannel) error {
 		opts := []project.PushOption{
-			project.PushWithCreateRepository(c.Create),
 			project.PushWithEventChannel(ch),
 		}
 		if c.Tag != "" {

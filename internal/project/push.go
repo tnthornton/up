@@ -71,9 +71,8 @@ func PushWithUpboundContext(upCtx *upbound.Context) PusherOption {
 type PushOption func(o *pushOptions)
 
 type pushOptions struct {
-	eventChan        async.EventChannel
-	tag              string
-	createRepository bool
+	eventChan async.EventChannel
+	tag       string
 }
 
 // PushWithEventChannel provides a channel to which progress updates will be
@@ -89,14 +88,6 @@ func PushWithEventChannel(ch async.EventChannel) PushOption {
 func PushWithTag(tag string) PushOption {
 	return func(o *pushOptions) {
 		o.tag = tag
-	}
-}
-
-// PushWithCreateRepository configures whether to create the repository during
-// push.
-func PushWithCreateRepository(create bool) PushOption {
-	return func(o *pushOptions) {
-		o.createRepository = create
 	}
 }
 
@@ -128,11 +119,8 @@ func (p *realPusher) Push(ctx context.Context, project *v1alpha1.Project, imgMap
 		return imgTag, err
 	}
 
-	if os.createRepository {
-		if !isUpboundRepository(p.upCtx, imgTag.Repository) {
-			return imgTag, errors.New("cannot create repository for non-Upbound registry")
-		}
-		stage := "Creating repository"
+	if isUpboundRepository(p.upCtx, imgTag.Repository) {
+		stage := "Ensuring repository exists"
 		os.eventChan.SendEvent(stage, async.EventStatusStarted)
 		err = p.createRepository(ctx, imgTag.Repository)
 		if err != nil {
