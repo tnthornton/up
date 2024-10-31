@@ -192,7 +192,7 @@ func (c *installCmd) getToken(p pterm.TextPrinter, upCtx *upbound.Context) (stri
 			Owner: tokens.TokenOwner{
 				Data: tokens.TokenOwnerData{
 					Type: tokens.TokenOwnerUser,
-					ID:   strconv.Itoa(int(a.User.ID)),
+					ID:   strconv.FormatUint(uint64(a.User.ID), 10),
 				},
 			},
 		},

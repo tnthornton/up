@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
-	"reflect"
 
 	"github.com/alecthomas/kong"
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
@@ -27,10 +26,10 @@ import (
 	"github.com/pterm/pterm"
 	"github.com/spf13/afero"
 
+	"github.com/upbound/up/cmd/up/project/common"
 	"github.com/upbound/up/internal/async"
 	"github.com/upbound/up/internal/project"
 	"github.com/upbound/up/internal/upterm"
-	"github.com/upbound/up/internal/version"
 	xcache "github.com/upbound/up/internal/xpkg/dep/cache"
 	"github.com/upbound/up/internal/xpkg/dep/manager"
 	"github.com/upbound/up/internal/xpkg/dep/resolver/image"
@@ -149,7 +148,7 @@ func (c *Cmd) Run(ctx context.Context, p pterm.TextPrinter) error { //nolint:goc
 		var err error
 		imgMap, err = b.Build(ctx, proj, c.projFS,
 			project.BuildWithEventChannel(ch),
-			project.BuildWithImageLabels(c.imageLabels()),
+			project.BuildWithImageLabels(common.ImageLabels(c)),
 			project.BuildWithDependencyManager(c.m),
 		)
 		return err
@@ -196,33 +195,4 @@ func (c *Cmd) Run(ctx context.Context, p pterm.TextPrinter) error { //nolint:goc
 	}
 
 	return nil
-}
-
-func (c *Cmd) imageLabels() map[string]string {
-	return map[string]string{
-		"io.upbound.up.userAgent": version.UserAgent(),
-		"io.upbound.up.buildCmd":  c.getCmdOptions(),
-	}
-}
-
-// getCmdOptions generates a string of all command-line options from the Cmd struct
-func (c Cmd) getCmdOptions() string {
-	v := reflect.ValueOf(c)
-	typeOfCmd := v.Type()
-
-	var options string
-
-	for i := 0; i < v.NumField(); i++ {
-		field := typeOfCmd.Field(i)
-		value := v.Field(i)
-		if !value.CanInterface() {
-			continue
-		}
-		if options != "" {
-			options += ", "
-		}
-		options += fmt.Sprintf("%s: %v", field.Name, value.Interface())
-	}
-
-	return options
 }

@@ -394,7 +394,7 @@ func (c *generateCmd) outputResource(res resource) error {
 		}
 
 		outputDir := filepath.Dir(filepath.Clean(filePath))
-		if err := os.MkdirAll(outputDir, os.ModePerm); err != nil {
+		if err := os.MkdirAll(outputDir, 0750); err != nil {
 			return errors.Wrapf(err, "failed to create output directory")
 		}
 
@@ -404,13 +404,13 @@ func (c *generateCmd) outputResource(res resource) error {
 
 		pterm.Printfln("Successfully created resource and saved to %s", filePath)
 	case outputYAML:
-		pterm.Printfln(string(resourceYAML))
+		pterm.Println(string(resourceYAML))
 	case outputJSON:
 		jsonData, err := yaml.YAMLToJSON(resourceYAML)
 		if err != nil {
 			return errors.Wrapf(err, "failed to convert resource to JSON")
 		}
-		pterm.Printfln(string(jsonData))
+		pterm.Println(string(jsonData))
 	default:
 		return errors.New("invalid output format specified")
 	}

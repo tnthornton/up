@@ -53,5 +53,5 @@ func (c *listCmd) Run(printer upterm.ObjectPrinter, p pterm.TextPrinter, oc *org
 
 func extractFields(obj any) []string {
 	o := obj.(organizations.Organization)
-	return []string{strconv.Itoa(int(o.ID)), o.Name, string(o.Role)}
+	return []string{strconv.FormatUint(uint64(o.ID), 10), o.Name, string(o.Role)}
 }

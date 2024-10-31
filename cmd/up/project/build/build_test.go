@@ -38,8 +38,8 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/yaml"
 
+	"github.com/upbound/up/cmd/up/project/common"
 	"github.com/upbound/up/internal/project"
-	"github.com/upbound/up/internal/version"
 	"github.com/upbound/up/internal/xpkg"
 	"github.com/upbound/up/internal/xpkg/dep/cache"
 	"github.com/upbound/up/internal/xpkg/dep/manager"
@@ -85,10 +85,7 @@ func TestBuild(t *testing.T) {
 				xpkg.ExamplesAnnotation:     true,
 			},
 			expectedLabels: func(c *Cmd) map[string]string {
-				return map[string]string{
-					"io.upbound.up.userAgent": version.UserAgent(),
-					"io.upbound.up.buildCmd":  c.getCmdOptions(),
-				}
+				return common.ImageLabels(c)
 			},
 		},
 		"EmbeddedFunctions": {
@@ -153,10 +150,7 @@ func TestBuild(t *testing.T) {
 				xpkg.ExamplesAnnotation:     false, // no-examples expected
 			},
 			expectedLabels: func(c *Cmd) map[string]string {
-				return map[string]string{
-					"io.upbound.up.userAgent": version.UserAgent(),
-					"io.upbound.up.buildCmd":  c.getCmdOptions(),
-				}
+				return common.ImageLabels(c)
 			},
 		},
 	}

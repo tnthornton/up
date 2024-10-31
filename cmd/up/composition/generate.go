@@ -191,12 +191,12 @@ func (c *generateCmd) Run(ctx context.Context, p pterm.TextPrinter) error { // n
 
 		// Ensure the directory exists before writing the file
 		outputDir := filepath.Dir(filepath.Clean(filePath))
-		if err = os.MkdirAll(outputDir, os.ModePerm); err != nil {
+		if err = os.MkdirAll(outputDir, 0750); err != nil {
 			return errors.Wrapf(err, "failed to create output directory")
 		}
 
 		// Write the YAML to the specified output file
-		if err = os.WriteFile(filePath, compositionYAML, 0644); err != nil { // nolint:gosec // writing to file
+		if err = os.WriteFile(filePath, compositionYAML, 0644); err != nil { //nolint:gosec // writing to file
 			return errors.Wrapf(err, "failed to write composition to file")
 		}
 
