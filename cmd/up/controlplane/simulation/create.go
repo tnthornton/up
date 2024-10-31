@@ -95,7 +95,7 @@ type CreateCmd struct {
 
 	Changeset     []string       `short:"f" help:"Path to the resources that will be applied as part of the simulation. Can either be a single file or a directory" required:"true"`
 	Recursive     bool           `short:"r" help:"Process the directory used in -f, --changeset recursively." default:"false"`
-	CompleteAfter *time.Duration `help:"The maximum amount of time the simulated control plane should run before ending the simulation"`
+	CompleteAfter *time.Duration `help:"The maximum amount of time the simulated control plane should run before ending the simulation" default:"60s"`
 
 	FailOn            failOnCondition `help:"Fail and exit with a code of '1' if a certain condition is met" default:"none" enum:"none, difference"`
 	Output            string          `short:"o" help:"Output the results of the simulation to the provided file. Defaults to standard out if not specified"`
