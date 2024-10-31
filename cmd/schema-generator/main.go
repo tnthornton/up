@@ -67,11 +67,14 @@ func (c *cli) generateSchema(ctx context.Context) error { //nolint:gocyclo
 		mu              sync.Mutex
 	)
 
+	// Explicitly pass the default keychain to remote.* calls so we look for Docker credentials.
+	keychain := remote.WithAuthFromKeychain(authn.NewMultiKeychain(authn.DefaultKeychain))
+
 	indexRef, err := name.ParseReference(c.SourceImage)
 	if err != nil {
 		return errors.Wrapf(err, "error parsing source image reference")
 	}
-	index, err := remote.Index(indexRef)
+	index, err := remote.Index(indexRef, keychain)
 	if err != nil {
 		return errors.Wrapf(err, "error pulling image index")
 	}
@@ -87,7 +90,7 @@ func (c *cli) generateSchema(ctx context.Context) error { //nolint:gocyclo
 		desc := desc
 		g.Go(func() error {
 			digestRef := indexRef.Context().Digest(desc.Digest.String())
-			img, err := remote.Image(digestRef)
+			img, err := remote.Image(digestRef, keychain)
 			if err != nil {
 				return errors.Wrapf(err, "error pulling architecture-specific image %s", desc.Digest)
 			}
@@ -150,9 +153,7 @@ func (c *cli) generateSchema(ctx context.Context) error { //nolint:gocyclo
 		return remote.WriteIndex(
 			targetRef,
 			multiArchIndex,
-			remote.WithAuthFromKeychain(authn.NewMultiKeychain(
-				authn.DefaultKeychain,
-			)))
+			keychain)
 	})
 	if err != nil {
 		return errors.Wrapf(err, "error pushing multi-arch image to registry %v", c.TargetImage)
