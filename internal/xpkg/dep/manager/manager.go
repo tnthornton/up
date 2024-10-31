@@ -248,12 +248,7 @@ func (m *Manager) AddAll(ctx context.Context, d v1beta1.Dependency) (v1beta1.Dep
 	if m.cacheModels != nil {
 		for _, pp := range m.acc {
 			for language, schemaFS := range pp.Schema {
-				// Create a new BasePathFs rooted at the new language folder
-				langFs := afero.NewBasePathFs(*m.cacheModels, language)
-
-				// Copy files from schemaFS to the language folder in cacheModels
-				err = filesystem.CopyFilesBetweenFs(schemaFS, langFs)
-				if err != nil {
+				if err := m.AddModels(language, schemaFS); err != nil {
 					return ud, m.acc, err
 				}
 			}
@@ -265,6 +260,18 @@ func (m *Manager) AddAll(ctx context.Context, d v1beta1.Dependency) (v1beta1.Dep
 	ud.Constraints = e.Version()
 
 	return ud, m.acc, nil
+}
+
+func (m *Manager) AddModels(language string, fromFS afero.Fs) error {
+	if m.cacheModels == nil {
+		return nil
+	}
+
+	// Create a new BasePathFs rooted at the new language folder
+	langFs := afero.NewBasePathFs(*m.cacheModels, language)
+
+	// Copy files from schemaFS to the language folder in cacheModels
+	return filesystem.CopyFilesBetweenFs(fromFS, langFs)
 }
 
 func (m *Manager) retrieveAllDeps(ctx context.Context, p *xpkg.ParsedPackage) error {

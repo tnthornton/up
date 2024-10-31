@@ -49,6 +49,9 @@ import (
 	"github.com/upbound/up/internal/project"
 	"github.com/upbound/up/internal/upbound"
 	"github.com/upbound/up/internal/upterm"
+	xcache "github.com/upbound/up/internal/xpkg/dep/cache"
+	"github.com/upbound/up/internal/xpkg/dep/manager"
+	"github.com/upbound/up/internal/xpkg/dep/resolver/image"
 	"github.com/upbound/up/internal/xpkg/functions"
 	"github.com/upbound/up/internal/xpkg/schemarunner"
 	"github.com/upbound/up/pkg/apis/project/v1alpha1"
@@ -75,12 +78,15 @@ type Cmd struct {
 	MaxConcurrency    uint          `help:"Maximum number of functions to build and push at once." env:"UP_MAX_CONCURRENCY" default:"8"`
 	ControlPlaneGroup string        `help:"The control plane group that the control plane to use is contained in. This defaults to the group specified in the current context."`
 	ControlPlaneName  string        `help:"Name of the control plane to use. It will be created if not found. Defaults to the project name."`
+	CacheDir          string        `help:"Directory used for caching dependencies." default:"~/.up/cache/" env:"CACHE_DIR" type:"path"`
 	Flags             upbound.Flags `embed:""`
 
 	projFS             afero.Fs
+	modelsFS           afero.Fs
 	functionIdentifier functions.Identifier
 	schemaRunner       schemarunner.SchemaRunner
 	transport          http.RoundTripper
+	m                  *manager.Manager
 }
 
 func (c *Cmd) AfterApply(kongCtx *kong.Context) error {
@@ -101,10 +107,28 @@ func (c *Cmd) AfterApply(kongCtx *kong.Context) error {
 	// Construct a virtual filesystem that contains only the project. We'll do
 	// all our operations inside this virtual FS.
 	c.projFS = afero.NewBasePathFs(afero.NewOsFs(), projDirPath)
+	c.modelsFS = afero.NewBasePathFs(afero.NewOsFs(), filepath.Join(projDirPath, ".up"))
 
 	c.functionIdentifier = functions.DefaultIdentifier
 	c.schemaRunner = schemarunner.RealSchemaRunner{}
 	c.transport = http.DefaultTransport
+
+	fs := afero.NewOsFs()
+	cache, err := xcache.NewLocal(c.CacheDir, xcache.WithFS(fs))
+	if err != nil {
+		return err
+	}
+	r := image.NewResolver()
+
+	m, err := manager.New(
+		manager.WithCacheModels(c.modelsFS),
+		manager.WithCache(cache),
+		manager.WithResolver(r),
+	)
+	if err != nil {
+		return err
+	}
+	c.m = m
 
 	// Set the control plane group based on the current kubeconfig conteext. If
 	// there's no namespace specified there, use "default".
@@ -179,6 +203,7 @@ func (c *Cmd) Run(ctx context.Context, upCtx *upbound.Context, p pterm.TextPrint
 			imgMap, err = b.Build(ctx, proj, c.projFS,
 				project.BuildWithEventChannel(ch),
 				project.BuildWithImageLabels(common.ImageLabels(c)),
+				project.BuildWithDependencyManager(c.m),
 			)
 			return err
 		})
