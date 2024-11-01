@@ -96,9 +96,6 @@ func (c *Cmd) AfterApply(kongCtx *kong.Context, p pterm.TextPrinter) error {
 
 	c.m = m
 
-	// workaround interfaces not being bindable ref: https://github.com/alecthomas/kong/issues/48
-	kongCtx.BindTo(ctx, (*context.Context)(nil))
-
 	c.functionIdentifier = functions.DefaultIdentifier
 	c.schemaRunner = schemarunner.RealSchemaRunner{}
 

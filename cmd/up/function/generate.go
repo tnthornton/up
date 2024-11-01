@@ -43,6 +43,23 @@ import (
 	"github.com/upbound/up/internal/xpkg/workspace"
 )
 
+func (c *generateCmd) Help() string {
+	return `
+The 'generate' command creates an embedded function in the specified language.
+
+Examples:
+    function generate fn1
+        Creates a function with the default language (KCL) in the folder 'functions/fn1'.
+
+    function generate fn2 --language python
+        Creates a function with Python language support in the folder 'functions/fn2'.
+
+    function generate xcluster /apis/xcluster/composition.yaml
+        Creates a function with the default language (KCL) in the folder 'functions/xcluster'
+        and adds a composition pipeline step with the function reference name specified in the given composition file.
+`
+}
+
 const kclModTemplate = `[package]
 name = "{{.Name}}"
 version = "0.0.1"
@@ -110,6 +127,7 @@ type generateCmd struct {
 	modelsFS          afero.Fs
 	projFS            afero.Fs
 	projectRepository string
+	fsPath            string
 
 	m  *manager.Manager
 	ws *workspace.Workspace
@@ -136,12 +154,15 @@ func (c *generateCmd) AfterApply(kongCtx *kong.Context, p pterm.TextPrinter) err
 	if err != nil {
 		return err
 	}
+
+	c.fsPath = filepath.Join(
+		proj.Spec.Paths.Functions,
+		c.Name,
+	)
+
 	c.projectRepository = proj.Spec.Repository
 	c.functionFS = afero.NewBasePathFs(
-		c.projFS, filepath.Join(
-			proj.Spec.Paths.Functions,
-			c.Name,
-		),
+		c.projFS, c.fsPath,
 	)
 
 	fs := afero.NewOsFs()
@@ -167,7 +188,8 @@ func (c *generateCmd) AfterApply(kongCtx *kong.Context, p pterm.TextPrinter) err
 
 	ws, err := workspace.New("/",
 		workspace.WithFS(c.projFS),
-		workspace.WithPrinter(p),
+		// The user doesn't care about workspace warnings during function generate.
+		workspace.WithPrinter(&pterm.BasicTextPrinter{Writer: io.Discard}),
 		workspace.WithPermissiveParser(),
 	)
 	if err != nil {
@@ -211,7 +233,7 @@ func (c *generateCmd) Run(ctx context.Context, p pterm.TextPrinter) error { // n
 		// Prompt the user for confirmation to overwrite
 		pterm.Println() // Blank line
 		confirm := pterm.DefaultInteractiveConfirm
-		confirm.DefaultText = "The function folder is not empty. Do you want to overwrite its contents?"
+		confirm.DefaultText = fmt.Sprintf("The folder '%s' is not empty. Do you want to overwrite its contents?", afero.FullBaseFsPath(c.projFS.(*afero.BasePathFs), c.fsPath))
 		confirm.DefaultValue = false
 		result, _ := confirm.Show()
 		pterm.Println() // Blank line
@@ -271,7 +293,6 @@ func (c *generateCmd) Run(ctx context.Context, p pterm.TextPrinter) error { // n
 					return errors.Wrapf(err, "error creating models symlink")
 				}
 			}
-
 			return nil
 		})
 	if err != nil {
@@ -298,6 +319,7 @@ func (c *generateCmd) Run(ctx context.Context, p pterm.TextPrinter) error { // n
 		}
 	}
 
+	pterm.Printfln("successfully created Function and saved to %s", afero.FullBaseFsPath(c.projFS.(*afero.BasePathFs), c.fsPath))
 	return nil
 }
 
