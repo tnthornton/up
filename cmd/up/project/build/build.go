@@ -21,13 +21,14 @@ import (
 
 	"github.com/alecthomas/kong"
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
-	"github.com/google/go-containerregistry/pkg/v1/cache"
+	v1cache "github.com/google/go-containerregistry/pkg/v1/cache"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
 	"github.com/pterm/pterm"
 	"github.com/spf13/afero"
 
 	"github.com/upbound/up/cmd/up/project/common"
 	"github.com/upbound/up/internal/async"
+	"github.com/upbound/up/internal/oci/cache"
 	"github.com/upbound/up/internal/project"
 	"github.com/upbound/up/internal/upterm"
 	xcache "github.com/upbound/up/internal/xpkg/dep/cache"
@@ -165,9 +166,9 @@ func (c *Cmd) Run(ctx context.Context, p pterm.TextPrinter) error { //nolint:goc
 		// only pull their layers once. Note we do this here rather than in the
 		// builder because pulling layers is deferred to where we use them, which is
 		// here.
-		cch := cache.NewFilesystemCache(c.BuildCacheDir)
+		cch := cache.NewValidatingCache(v1cache.NewFilesystemCache(c.BuildCacheDir))
 		for tag, img := range imgMap {
-			imgMap[tag] = cache.Image(img, cch)
+			imgMap[tag] = v1cache.Image(img, cch)
 		}
 	}
 

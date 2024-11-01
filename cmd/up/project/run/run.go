@@ -27,7 +27,7 @@ import (
 	xpkgv1 "github.com/crossplane/crossplane/apis/pkg/v1"
 	xpkgv1beta1 "github.com/crossplane/crossplane/apis/pkg/v1beta1"
 	"github.com/google/go-containerregistry/pkg/name"
-	"github.com/google/go-containerregistry/pkg/v1/cache"
+	v1cache "github.com/google/go-containerregistry/pkg/v1/cache"
 	"github.com/pterm/pterm"
 	"github.com/spf13/afero"
 	"golang.org/x/sync/errgroup"
@@ -45,6 +45,7 @@ import (
 	ctxcmd "github.com/upbound/up/cmd/up/ctx"
 	"github.com/upbound/up/cmd/up/project/common"
 	"github.com/upbound/up/internal/async"
+	"github.com/upbound/up/internal/oci/cache"
 	"github.com/upbound/up/internal/profile"
 	"github.com/upbound/up/internal/project"
 	"github.com/upbound/up/internal/upbound"
@@ -219,9 +220,9 @@ func (c *Cmd) Run(ctx context.Context, upCtx *upbound.Context, p pterm.TextPrint
 		// only pull their layers once. Note we do this here rather than in the
 		// builder because pulling layers is deferred to where we use them, which is
 		// here.
-		cch := cache.NewFilesystemCache(c.BuildCacheDir)
+		cch := cache.NewValidatingCache(v1cache.NewFilesystemCache(c.BuildCacheDir))
 		for tag, img := range imgMap {
-			imgMap[tag] = cache.Image(img, cch)
+			imgMap[tag] = v1cache.Image(img, cch)
 		}
 	}
 
