@@ -132,7 +132,7 @@ func PushImages(p pterm.TextPrinter, upCtx *upbound.Context, imgs []v1.Image, t 
 		if err != nil {
 			return err
 		}
-		if err := repositories.NewClient(cfg).CreateOrUpdate(context.Background(), parts[0], parts[1]); err != nil {
+		if err := repositories.NewClient(cfg).CreateOrUpdate(context.Background(), parts[0], parts[1]); err != nil { //nolint:staticcheck // This file will be deleted soon.
 			return errors.Wrap(err, errCreateRepo)
 		}
 	}

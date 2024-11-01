@@ -81,6 +81,7 @@ type Cmd struct {
 	ControlPlaneGroup string        `help:"The control plane group that the control plane to use is contained in. This defaults to the group specified in the current context."`
 	ControlPlaneName  string        `help:"Name of the control plane to use. It will be created if not found. Defaults to the project name."`
 	CacheDir          string        `help:"Directory used for caching dependencies." default:"~/.up/cache/" env:"CACHE_DIR" type:"path"`
+	Public            bool          `help:"Create new repositories with public visibility."`
 	Flags             upbound.Flags `embed:""`
 
 	projFS             afero.Fs
@@ -245,6 +246,7 @@ func (c *Cmd) Run(ctx context.Context, upCtx *upbound.Context, p pterm.TextPrint
 	err = async.WrapWithSuccessSpinners(func(ch async.EventChannel) error {
 		opts := []project.PushOption{
 			project.PushWithEventChannel(ch),
+			project.PushWithCreatePublicRepositories(c.Public),
 		}
 
 		var err error

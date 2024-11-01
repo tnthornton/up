@@ -40,7 +40,7 @@ require (
 	github.com/spf13/afero v1.11.0
 	github.com/spf13/cobra v1.8.1
 	github.com/stretchr/testify v1.9.0
-	github.com/upbound/up-sdk-go v0.3.1-0.20241018115012-f6c25d228e01
+	github.com/upbound/up-sdk-go v0.3.1-0.20241101184205-29204b449129
 	github.com/upbound/up-sdk-go/apis v1.8.1-0.20241018115012-f6c25d228e01
 	github.com/upbound/up/pkg/migration v0.0.0-00010101000000-000000000000
 	github.com/willabides/kongplete v0.3.0

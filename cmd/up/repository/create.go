@@ -26,12 +26,17 @@ import (
 
 // createCmd creates a repository on Upbound.
 type createCmd struct {
-	Name string `arg:"" required:"" help:"Name of repository."`
+	Name    string `arg:"" required:"" help:"Name of repository."`
+	Private bool   `help:"Make the new repository private."`
 }
 
 // Run executes the create command.
 func (c *createCmd) Run(ctx context.Context, p pterm.TextPrinter, rc *repositories.Client, upCtx *upbound.Context) error {
-	if err := rc.CreateOrUpdate(ctx, upCtx.Account, c.Name); err != nil {
+	visibility := repositories.WithPublic()
+	if c.Private {
+		visibility = repositories.WithPrivate()
+	}
+	if err := rc.CreateOrUpdateWithOptions(ctx, upCtx.Account, c.Name, visibility); err != nil {
 		return err
 	}
 	p.Printfln("%s/%s created", upCtx.Account, c.Name)

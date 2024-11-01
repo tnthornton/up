@@ -71,8 +71,9 @@ func PushWithUpboundContext(upCtx *upbound.Context) PusherOption {
 type PushOption func(o *pushOptions)
 
 type pushOptions struct {
-	eventChan async.EventChannel
-	tag       string
+	eventChan                async.EventChannel
+	tag                      string
+	createPublicRepositories bool
 }
 
 // PushWithEventChannel provides a channel to which progress updates will be
@@ -88,6 +89,14 @@ func PushWithEventChannel(ch async.EventChannel) PushOption {
 func PushWithTag(tag string) PushOption {
 	return func(o *pushOptions) {
 		o.tag = tag
+	}
+}
+
+// PushWithCreatePublicRepositories configures whether to create any new
+// repositories with public visibility. Private is the default.
+func PushWithCreatePublicRepositories(public bool) PushOption {
+	return func(o *pushOptions) {
+		o.createPublicRepositories = public
 	}
 }
 
@@ -122,7 +131,7 @@ func (p *realPusher) Push(ctx context.Context, project *v1alpha1.Project, imgMap
 	if isUpboundRepository(p.upCtx, imgTag.Repository) {
 		stage := "Ensuring repository exists"
 		os.eventChan.SendEvent(stage, async.EventStatusStarted)
-		err = p.createRepository(ctx, imgTag.Repository)
+		err = p.createRepository(ctx, imgTag.Repository, os.createPublicRepositories)
 		if err != nil {
 			os.eventChan.SendEvent(stage, async.EventStatusFailure)
 			return imgTag, err
@@ -146,7 +155,7 @@ func (p *realPusher) Push(ctx context.Context, project *v1alpha1.Project, imgMap
 			// Create the subrepository if needed. We can only do this for the
 			// Upbound registry; assume other registries will create on push.
 			if isUpboundRepository(p.upCtx, repo) {
-				err := p.createRepository(egCtx, repo)
+				err := p.createRepository(egCtx, repo, os.createPublicRepositories)
 				if err != nil {
 					os.eventChan.SendEvent(stage, async.EventStatusFailure)
 					return errors.Wrapf(err, "failed to create repository for function %q", repo)
@@ -182,7 +191,7 @@ func (p *realPusher) Push(ctx context.Context, project *v1alpha1.Project, imgMap
 	return imgTag, nil
 }
 
-func (p *realPusher) createRepository(ctx context.Context, repo name.Repository) error {
+func (p *realPusher) createRepository(ctx context.Context, repo name.Repository, public bool) error {
 	account, repoName, ok := strings.Cut(repo.RepositoryStr(), "/")
 	if !ok {
 		return errors.New("invalid repository: must be of the form <account>/<name>")
@@ -191,8 +200,11 @@ func (p *realPusher) createRepository(ctx context.Context, repo name.Repository)
 	if err != nil {
 		return err
 	}
-	// TODO(adamwg): Make the repository private by default.
-	if err := repositories.NewClient(cfg).CreateOrUpdate(ctx, account, repoName); err != nil {
+	visibility := repositories.WithPrivate()
+	if public {
+		visibility = repositories.WithPublic()
+	}
+	if err := repositories.NewClient(cfg).CreateOrUpdateWithOptions(ctx, account, repoName, visibility); err != nil {
 		return errors.Wrap(err, "failed to create repository")
 	}
 

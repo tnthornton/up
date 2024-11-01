@@ -40,6 +40,7 @@ type Cmd struct {
 	Tag            string        `short:"t" help:"Tag for the built package. If not provided, a semver tag will be generated." default:""`
 	PackageFile    string        `optional:"" help:"Package file to push. Discovered by default based on repository and tag."`
 	MaxConcurrency uint          `help:"Maximum number of functions to build at once." env:"UP_MAX_CONCURRENCY" default:"8"`
+	Public         bool          `help:"Create new repositories with public visibility."`
 	Flags          upbound.Flags `embed:""`
 
 	projFS    afero.Fs
@@ -120,6 +121,7 @@ func (c *Cmd) Run(ctx context.Context, upCtx *upbound.Context, p pterm.TextPrint
 	err = async.WrapWithSuccessSpinners(func(ch async.EventChannel) error {
 		opts := []project.PushOption{
 			project.PushWithEventChannel(ch),
+			project.PushWithCreatePublicRepositories(c.Public),
 		}
 		if c.Tag != "" {
 			opts = append(opts, project.PushWithTag(c.Tag))
