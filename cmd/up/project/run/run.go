@@ -18,6 +18,7 @@ import (
 	"context"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/alecthomas/kong"
@@ -179,6 +180,14 @@ func (c *Cmd) Run(ctx context.Context, upCtx *upbound.Context, p pterm.TextPrint
 		c.ControlPlaneName = proj.Name
 	}
 
+	// Ensure the user's up context is pointed at a cloud space and matches the
+	// project's org. If it doesn't we would either fail to create repositories
+	// or fail to pull from them in the dev MCP after doing a bunch of
+	// work. Better to fail fast.
+	if err := validateUpContext(upCtx, proj); err != nil {
+		return err
+	}
+
 	b := project.NewBuilder(
 		project.BuildWithMaxConcurrency(c.MaxConcurrency),
 		project.BuildWithFunctionIdentifier(c.functionIdentifier),
@@ -248,6 +257,39 @@ func (c *Cmd) Run(ctx context.Context, upCtx *upbound.Context, p pterm.TextPrint
 	err = c.installPackage(ctx, devCtpClient, proj, generatedTag)
 	if err != nil {
 		return err
+	}
+
+	return nil
+}
+
+func validateUpContext(upCtx *upbound.Context, proj *v1alpha1.Project) error {
+	kubeCtx, _, _, ok := upCtx.GetCurrentContext()
+	if !ok {
+		return errors.New("invalid up context")
+	}
+
+	ext, err := upbound.GetSpaceExtension(kubeCtx)
+	if err != nil {
+		return errors.Wrap(err, "failed to get spaces extension from kubeconfig context")
+	}
+	if ext == nil || ext.Spec == nil || ext.Spec.Cloud == nil {
+		return errors.New("current kubeconfig context is not an Upbound Cloud Space; use `up ctx` to select a cloud space")
+	}
+
+	ref, err := name.ParseReference(proj.Spec.Repository)
+	if err != nil {
+		return errors.Wrap(err, "failed to parse project repository")
+	}
+
+	reg := ref.Context().RegistryStr()
+	if reg != upCtx.RegistryEndpoint.Host {
+		return errors.New("project registry does not match your current up profile; use `up project move` to change it or `up profile use` to switch profiles")
+	}
+
+	repo := ref.Context().RepositoryStr()
+	org := strings.SplitN(repo, "/", 2)[0]
+	if org != ext.Spec.Cloud.Organization {
+		return errors.New("project repository does not belong to your current organization; use `up project move` to change it or `up ctx` to select a different organization")
 	}
 
 	return nil
