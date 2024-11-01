@@ -32,6 +32,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/yaml"
 
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
 
@@ -49,11 +50,12 @@ import (
 )
 
 const (
-	agentChart   = "agent"
-	agentNs      = "upbound-system"
-	agentSecret  = "space-token"
-	connConfMap  = "space-connect"
-	mxpConfigMap = "mxp-config"
+	agentChart      = "agent"
+	agentNs         = "upbound-system"
+	agentSecret     = "space-token"
+	connConfMap     = "space-connect"
+	spacesConfigMap = "spaces-config"
+	spacesConfigKey = "config.yaml"
 
 	keySpace   = "space"
 	keyToken   = "token"
@@ -69,7 +71,7 @@ const (
 )
 
 type connectCmd struct {
-	Registry registryFlags `embed:""`
+	Registry authorizedRegistryFlags `embed:""`
 
 	Upbound upbound.Flags     `embed:""`
 	Kube    upbound.KubeFlags `embed:""`
@@ -123,6 +125,7 @@ func (c *connectCmd) AfterApply(kongCtx *kong.Context) error {
 		agentChart,
 		c.Registry.Repository,
 		helm.WithNamespace(agentNs),
+		helm.WithBasicAuth(c.Registry.Username, c.Registry.Password),
 		helm.IsOCI(),
 		helm.Wait(),
 		helm.Force(true),
@@ -138,14 +141,23 @@ func (c *connectCmd) AfterApply(kongCtx *kong.Context) error {
 
 // Run executes the connect command.
 func (c *connectCmd) Run(ctx context.Context, mgr *helm.Installer, kClient *kubernetes.Clientset, upCtx *upbound.Context, ac *accounts.Client, oc *organizations.Client, tc *tokens.Client, rc *robots.Client, rest *rest.Config) (rErr error) { //nolint:gocyclo
-	mxpConfig, err := kClient.CoreV1().ConfigMaps(agentNs).Get(ctx, mxpConfigMap, metav1.GetOptions{})
+	spacesCM, err := kClient.CoreV1().ConfigMaps(agentNs).Get(ctx, spacesConfigMap, metav1.GetOptions{})
 	if kerrors.IsNotFound(err) {
 		return errors.New("failed to detect Space. Please run `up space init` first.")
 	} else if err != nil {
-		return errors.Wrapf(err, `failed to get ConfigMap "%s/%s"`, agentNs, mxpConfigMap)
+		return errors.Wrapf(err, `failed to get ConfigMap "%s/%s"`, agentNs, spacesConfigMap)
 	}
-	if spaceAcc := mxpConfig.Data["account"]; spaceAcc != upCtx.Account {
-		return errors.Errorf("account of the Space %q and account of the profile %q mismatch. Use `--account=%s` to connect to the right organization.", spaceAcc, c.Upbound.Account, spaceAcc)
+
+	if spacesCM.Data == nil || spacesCM.Data[spacesConfigKey] == "" {
+		return errors.Errorf("%q not found in %q configmap", spacesConfigKey, spacesConfigMap)
+	}
+	sc := &SpacesConfig{}
+	if err = yaml.Unmarshal([]byte(spacesCM.Data[spacesConfigKey]), sc); err != nil {
+		return errors.Wrap(err, "cannot unmarshal spaces config")
+	}
+
+	if sc.Account != upCtx.Account {
+		return errors.Errorf("account of the Space %q and account of the profile %q mismatch. Use `--account=%s` to connect to the right organization.", sc.Account, c.Upbound.Account, sc.Account)
 	}
 
 	connectSpinner, err := upterm.CheckmarkSuccessSpinner.Start("Connecting Space to Upbound Console...")
@@ -262,6 +274,11 @@ func (c *connectCmd) deriveParams(a *accounts.AccountResponse) map[string]any {
 		"registration": map[string]any{
 			"image": map[string]any{
 				"repository": c.Registry.Repository.JoinPath("register-init").String(),
+			},
+		},
+		"imagePullSecrets": []map[string]string{
+			{
+				"name": defaultImagePullSecret,
 			},
 		},
 	}
@@ -654,4 +671,10 @@ func warnAndConfirmWithSpinner(spinner *pterm.SpinnerPrinter, warning string, ar
 		spinner.IsActive = true
 	}()
 	return warnAndConfirm(warning, args...)
+}
+
+// SpacesConfig struct represents the configuration settings for the spaces.
+type SpacesConfig struct {
+	// Account is the account name of the organization.
+	Account string `json:"account"`
 }
