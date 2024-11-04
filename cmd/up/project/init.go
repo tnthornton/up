@@ -30,9 +30,9 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport/ssh"
 	"github.com/go-git/go-git/v5/storage/memory"
 	"github.com/pterm/pterm"
-	"sigs.k8s.io/yaml"
 
 	"github.com/upbound/up/internal/upbound"
+	"github.com/upbound/up/internal/yaml"
 	"github.com/upbound/up/pkg/apis/project/v1alpha1"
 )
 
@@ -213,17 +213,7 @@ func (c *initCmd) Run(ctx context.Context, upCtx *upbound.Context, p pterm.TextP
 		project.Spec.Repository = fmt.Sprintf("xpkg.upbound.io/<YOUR ORGANIZATION>/%s", c.Name)
 	}
 
-	// get rid of metadata.creationTimestamp nil
-	projectClean := map[string]interface{}{
-		"apiVersion": project.APIVersion,
-		"kind":       project.Kind,
-		"metadata": map[string]interface{}{
-			"name": project.ObjectMeta.Name,
-		},
-		"spec": project.Spec,
-	}
-
-	modifiedProject, err := yaml.Marshal(&projectClean)
+	modifiedProject, err := yaml.Marshal(&project)
 	if err != nil {
 		return errors.Wrap(err, "could not construct project file")
 	}

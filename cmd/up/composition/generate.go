@@ -34,6 +34,8 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/utils/ptr"
 
 	xcrd "github.com/upbound/up/internal/crd"
 	"github.com/upbound/up/internal/project"
@@ -44,11 +46,8 @@ import (
 	mxpkg "github.com/upbound/up/internal/xpkg/dep/marshaler/xpkg"
 	"github.com/upbound/up/internal/xpkg/dep/resolver/image"
 	"github.com/upbound/up/internal/xpkg/workspace"
+	"github.com/upbound/up/internal/yaml"
 	projectv1alpha1 "github.com/upbound/up/pkg/apis/project/v1alpha1"
-
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/utils/ptr"
-	"sigs.k8s.io/yaml"
 )
 
 func (c *generateCmd) Help() string {
@@ -208,25 +207,8 @@ func (c *generateCmd) Run(ctx context.Context, p pterm.TextPrinter) error { // n
 		return errors.Wrap(err, "failed to create composition")
 	}
 
-	// get rid of metadata.creationTimestamp nil
-	compositionClean := map[string]interface{}{
-		"apiVersion": composition.APIVersion,
-		"kind":       composition.Kind,
-		"metadata": map[string]interface{}{
-			"name": composition.ObjectMeta.Name,
-		},
-		"spec": composition.Spec,
-	}
-
-	// Add labels if they exist
-	if len(composition.ObjectMeta.Labels) > 0 {
-		if metadata, ok := compositionClean["metadata"].(map[string]interface{}); ok {
-			metadata["labels"] = composition.ObjectMeta.Labels
-		}
-	}
-
 	// Convert Composition to YAML format
-	compositionYAML, err := yaml.Marshal(compositionClean)
+	compositionYAML, err := yaml.Marshal(composition)
 	if err != nil {
 		return errors.Wrap(err, "failed to marshal composition to yaml")
 	}
