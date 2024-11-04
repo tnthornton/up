@@ -18,11 +18,12 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/alecthomas/kong"
-	xpmeta "github.com/crossplane/crossplane-runtime/pkg/meta"
+	"github.com/crossplane/crossplane-runtime/pkg/fieldpath"
 	"github.com/pkg/errors"
 	"github.com/pterm/pterm"
 	diffv3 "github.com/r3labs/diff/v3"
@@ -347,12 +348,44 @@ func (c *CreateCmd) applyChangesetStep(config *rest.Config) func() error {
 }
 
 // removeFieldsForDiff removes any fields that should be excluded from the diff.
-func (c *CreateCmd) removeFieldsForDiff(u *unstructured.Unstructured) {
-	xpmeta.RemoveAnnotations(u,
-		annotationKeyClonedState,
-		"kubectl.kubernetes.io/last-applied-configuration",
-	)
-	u.SetManagedFields([]metav1.ManagedFieldsEntry{})
+func (c *CreateCmd) removeFieldsForDiff(u *unstructured.Unstructured) error {
+	// based on the filters in the simulation preprocessor
+	// https://github.com/upbound/spaces/blob/v1.8.0/internal/controller/mxe/simulation/preprocess.go#L100-L108
+	trim := []string{
+		"metadata.generateName",
+		"metadata.uid",
+		"metadata.resourceVersion",
+		"metadata.generation",
+		"metadata.creationTimestamp",
+		"metadata.ownerReferences",
+		"metadata.managedFields",
+		"metadata.annotations['kubectl.kubernetes.io/last-applied-configuration']",
+		fmt.Sprintf("metadata.annotations['%s']", annotationKeyClonedState),
+		"spec.compositionRevisionRef",
+	}
+
+	wildcards := []string{
+		"status.conditions[*].lastTransitionTime",
+	}
+
+	p := fieldpath.Pave(u.UnstructuredContent())
+
+	// expand each wildcard path and add to list to trim
+	for _, wildcard := range wildcards {
+		if expanded, err := p.ExpandWildcards(wildcard); err != nil {
+			return errors.Wrap(err, "unable to expand wildcards in ignored fields")
+		} else {
+			trim = append(trim, expanded...)
+		}
+	}
+
+	for _, path := range trim {
+		if err := p.DeleteField(path); err != nil {
+			return errors.Wrap(err, "cannot delete field")
+		}
+	}
+
+	return nil
 }
 
 // createResourceDiffSet reads through all of the changes from the simulation
@@ -376,8 +409,24 @@ func (c *CreateCmd) createResourceDiffSet(ctx context.Context, kongCtx *kong.Con
 		fmt.Fprintf(kongCtx.Stderr, "iterating over %d changes\n", len(changes))
 	}
 
+	// stores a list of resources that we want to filter in the diff, that
+	// aren't being filtered in the reconciler
+	trimKind := []schema.GroupVersionKind{
+		{Group: "apiextensions.crossplane.io", Version: "v1", Kind: "CompositionRevision"},
+		{Group: "pkg.crossplane.io", Version: "v1beta1", Kind: "DeploymentRuntimeConfig"},
+	}
+
 	for _, change := range changes {
 		gvk := schema.FromAPIVersionAndKind(change.ObjectReference.APIVersion, change.ObjectReference.Kind)
+
+		// todo(redbackthomson): Remove this logic once we have done a better
+		// job of filtering in the reconciler
+		if slices.Contains(trimKind, gvk) {
+			if c.Flags.Debug > 0 {
+				fmt.Fprintf(kongCtx.Stderr, "skipping gvk %+v\n", gvk)
+			}
+			continue
+		}
 
 		rs, err := lookup.Get(gvk)
 		if err != nil {
@@ -436,12 +485,22 @@ func (c *CreateCmd) createResourceDiffSet(ctx context.Context, kongCtx *kong.Con
 		}
 
 		before := beforeObj.(*unstructured.Unstructured)
-		c.removeFieldsForDiff(after)
-		c.removeFieldsForDiff(before)
+		if err := c.removeFieldsForDiff(after); err != nil {
+			return []diff.ResourceDiff{}, errors.Wrapf(err, "unable to remove fields before diff")
+		}
+
+		if err := c.removeFieldsForDiff(before); err != nil {
+			return []diff.ResourceDiff{}, errors.Wrapf(err, "unable to remove fields before diff")
+		}
 
 		diffd, err := diffv3.Diff(before.UnstructuredContent(), after.UnstructuredContent())
 		if err != nil {
 			return []diff.ResourceDiff{}, errors.Wrapf(err, "unable to calculate diff for object %v", change.ObjectReference)
+		}
+
+		// we filtered out all of the changes
+		if len(diffd) == 0 {
+			continue
 		}
 
 		diffSet = append(diffSet, diff.ResourceDiff{
