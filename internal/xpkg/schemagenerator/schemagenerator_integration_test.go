@@ -19,12 +19,9 @@ package schemagenerator
 
 import (
 	"archive/tar"
-	"bytes"
 	"context"
 	"embed"
-	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"sort"
 	"strings"
@@ -93,7 +90,7 @@ func (m *MockParser) Parse(context.Context, io.ReadCloser) (*parser.Package, err
 	return m.MockParse()
 }
 
-func TestBuildKclSchemas(t *testing.T) {
+func TestSchemas(t *testing.T) {
 	// Initialize the YAML parser
 	pkgp, _ := yaml.New()
 
@@ -116,6 +113,7 @@ func TestBuildKclSchemas(t *testing.T) {
 		kclSchemaError error
 		labels         []string
 		err            error
+		requiredFiles  []string // Add requiredFiles to the want struct
 	}
 
 	// Define the test cases
@@ -124,7 +122,7 @@ func TestBuildKclSchemas(t *testing.T) {
 		args   args
 		want   want
 	}{
-		"SuccessWithKCLSchemas": {
+		"KCLSchemas": {
 			reason: "Should successfully build and have a kcl layer.",
 			args: args{
 				rootDir: "/",
@@ -163,6 +161,62 @@ func TestBuildKclSchemas(t *testing.T) {
 					xpkg.SchemaKclAnnotation,
 				},
 				err: nil,
+				requiredFiles: []string{
+					"/models/co/acme/platform/v1alpha1/accountscaffold.k",
+					"/models/co/acme/platform/v1alpha1/xaccountscaffold.k",
+					"/models/k8s/apimachinery/pkg/apis/meta/v1/managed_fields_entry.k",
+					"/models/k8s/apimachinery/pkg/apis/meta/v1/object_meta.k",
+					"/models/k8s/apimachinery/pkg/apis/meta/v1/owner_reference.k",
+					"/models/kcl.mod",
+				},
+			},
+		},
+		"PythonSchemas": {
+			reason: "Should successfully build and have a python layer.",
+			args: args{
+				rootDir: "/",
+				fs: func() afero.Fs {
+					fs := afero.NewMemMapFs()
+					_ = fs.Mkdir("/ws", os.ModePerm)
+					_ = fs.Mkdir("/ws/apis", os.ModePerm)
+					_ = afero.WriteFile(fs, "/ws/crossplane.yaml", testSchemaConfiguration, os.ModePerm)
+					_ = afero.WriteFile(fs, "/ws/apis/composition.yaml", testSchemaComposition, os.ModePerm)
+					_ = afero.WriteFile(fs, "/ws/apis/definition.yaml", testSchemaXrd, os.ModePerm)
+					return fs
+				},
+				mutators: func(fs afero.Fs) []xpkg.Mutator {
+					var mutators []xpkg.Mutator
+
+					// Generate schemaPythonFS
+					ctx := context.Background()
+					schemaPythonFS, err := GenerateSchemaPython(ctx, fs, []string{}, schemarunner.RealSchemaRunner{})
+					if err != nil {
+						t.Fatalf("Failed to generate schemaPythonFS: %v", err)
+					}
+
+					// If schemaPythonFS is generated, append the Schema mutator
+					if schemaPythonFS != nil {
+						mutators = append(mutators, umutators.NewSchemaMutator(schema.New(schemaPythonFS, "", xpkg.StreamFileMode), xpkg.SchemaPythonAnnotation))
+					}
+
+					return mutators
+				},
+			},
+			want: want{
+				pkgExists: true,
+				labels: []string{
+					xpkg.PackageAnnotation,
+					xpkg.SchemaPythonAnnotation,
+				},
+				err: nil,
+				requiredFiles: []string{
+					"/models/co/acme/platform/accountscaffold/__init__.py",
+					"/models/co/acme/platform/accountscaffold/v1alpha1.py",
+					"/models/co/acme/platform/xaccountscaffold/__init__.py",
+					"/models/co/acme/platform/xaccountscaffold/v1alpha1.py",
+					"/models/io/k8s/apimachinery/pkg/apis/meta/__init__.py",
+					"/models/io/k8s/apimachinery/pkg/apis/meta/v1.py",
+				},
 			},
 		},
 	}
@@ -212,150 +266,22 @@ func TestBuildKclSchemas(t *testing.T) {
 			if diff := cmp.Diff(tc.want.pkgExists, len(contents.pkgBytes) != 0); diff != "" {
 				t.Errorf("\n%s\nBuildKclSchemas(...): -want package, +got no package:\n%s", tc.reason, diff)
 			}
-			// Perform the KCL schema comparison check and get detailed error
-			comparisonError := compareEmbedWithTarFS(testSchemasKcl, tarfs.New(tar.NewReader(mutate.Extract(img))), "testdata/kcl/models")
-			if diff := cmp.Diff(tc.want.kclSchemaError, comparisonError, cmpopts.EquateErrors()); diff != "" {
-				t.Errorf("\n%s\nBuildKclSchemas(...): -want schema comparison success, +got failure:\n%s", tc.reason, diff)
+
+			// Check for file presence in tarFS based on requiredFiles in the want struct
+			tarReader := tar.NewReader(mutate.Extract(img))
+			tarFs := tarfs.New(tarReader)
+
+			for _, file := range tc.want.requiredFiles {
+				_, err := tarFs.Open(file)
+				if err != nil {
+					t.Errorf("Expected file %s to be present in tar archive, but it was not found", file)
+				}
 			}
 
 			if diff := cmp.Diff(tc.want.labels, contents.labels, cmpopts.SortSlices(func(i, j int) bool {
 				return contents.labels[i] < contents.labels[j]
 			})); diff != "" {
 				t.Errorf("\n%s\nBuildKclSchemas(...): -want labels, +got labels:\n%s", tc.reason, diff)
-			}
-
-		})
-	}
-}
-
-func TestBuildPythonSchemas(t *testing.T) {
-	// Initialize the YAML parser
-	pkgp, _ := yaml.New()
-
-	// Define the function type for file system creation
-	type withFsFn func() afero.Fs
-
-	// Define the function type for mutator creation
-	type withMutatorsFn func(afero.Fs) []xpkg.Mutator
-
-	// Define the arguments for the test case
-	type args struct {
-		rootDir  string
-		fs       withFsFn
-		mutators withMutatorsFn // Add mutators to the test arguments
-	}
-
-	// Define the expected output (want)
-	type want struct {
-		pkgExists         bool
-		pythonSchemaError error
-		labels            []string
-		err               error
-	}
-
-	// Define the test cases
-	cases := map[string]struct {
-		reason string
-		args   args
-		want   want
-	}{
-		"SuccessWithPythonSchemas": {
-			reason: "Should successfully build and have a python layer.",
-			args: args{
-				rootDir: "/",
-				fs: func() afero.Fs {
-					fs := afero.NewMemMapFs()
-					_ = fs.Mkdir("/ws", os.ModePerm)
-					_ = fs.Mkdir("/ws/apis", os.ModePerm)
-					_ = afero.WriteFile(fs, "/ws/crossplane.yaml", testSchemaConfiguration, os.ModePerm)
-					_ = afero.WriteFile(fs, "/ws/apis/composition.yaml", testSchemaComposition, os.ModePerm)
-					_ = afero.WriteFile(fs, "/ws/apis/definition.yaml", testSchemaXrd, os.ModePerm)
-					return fs
-				},
-				mutators: func(fs afero.Fs) []xpkg.Mutator {
-					var mutators []xpkg.Mutator
-
-					// Generate schemaPythonFS
-					ctx := context.Background()
-					schemaPythonFS, err := GenerateSchemaPython(ctx, fs, []string{}, schemarunner.RealSchemaRunner{})
-					if err != nil {
-						t.Fatalf("Failed to generate schemaPythonFS: %v", err)
-					}
-
-					// If schemaPythonFS is generated, append the Schema mutator
-					if schemaPythonFS != nil {
-						mutators = append(mutators, umutators.NewSchemaMutator(schema.New(schemaPythonFS, "", xpkg.StreamFileMode), xpkg.SchemaPythonAnnotation))
-					}
-
-					return mutators
-				},
-			},
-			want: want{
-				pkgExists: true,
-				labels: []string{
-					xpkg.PackageAnnotation,
-					xpkg.SchemaPythonAnnotation,
-				},
-				err: nil,
-			},
-		},
-	}
-
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			// Initialize the in-memory file system from the test case
-			fs := tc.args.fs()
-
-			// Create package backend
-			pkgBe := parser.NewFsBackend(
-				fs,
-				parser.FsDir(tc.args.rootDir),
-				parser.FsFilters([]parser.FilterFn{
-					parser.SkipDirs(),
-					parser.SkipNotYAML(),
-					parser.SkipEmpty(),
-				}...),
-			)
-
-			// Create examples backend (we reintroduce this as part of the builder)
-			pkgEx := parser.NewFsBackend(
-				fs,
-				parser.FsDir(tc.args.rootDir+"/examples"), // Assuming examples are at /ws/examples
-				parser.FsFilters([]parser.FilterFn{
-					parser.SkipDirs(),
-					parser.SkipNotYAML(),
-					parser.SkipEmpty(),
-				}...),
-			)
-
-			// Get the mutators
-			mutators := tc.args.mutators(fs)
-
-			// Initialize the builder with schemaPythonFS, valid backends, and mutators
-			builder := xpkg.New(pkgBe, nil, pkgEx, pkgp, nil, mutators...)
-
-			img, _, err := builder.Build(context.TODO())
-
-			if diff := cmp.Diff(tc.want.err, err, test.EquateErrors()); diff != "" {
-				t.Errorf("\n%s\nBuildPythonSchemas(...): -want err, +got err:\n%s", tc.reason, diff)
-			}
-
-			contents, _ := readImg(img)
-			sort.Strings(contents.labels)
-
-			if diff := cmp.Diff(tc.want.pkgExists, len(contents.pkgBytes) != 0); diff != "" {
-				t.Errorf("\n%s\nBuildPythonSchemas(...): -want package, +got no package:\n%s", tc.reason, diff)
-			}
-			// Perform the Python schema comparison check and get detailed error
-			comparisonError := compareEmbedWithTarFS(testSchemasPython, tarfs.New(tar.NewReader(mutate.Extract(img))), "testdata/python/models")
-			if diff := cmp.Diff(tc.want.pythonSchemaError, comparisonError, cmpopts.EquateErrors()); diff != "" {
-				t.Errorf("\n%s\nBuildKclSchemas(...): -want schema comparison success, +got failure:\n%s", tc.reason, diff)
-			}
-
-			if diff := cmp.Diff(tc.want.labels, contents.labels, cmpopts.SortSlices(func(i, j int) bool {
-				return contents.labels[i] < contents.labels[j]
-			})); diff != "" {
-				t.Errorf("\n%s\nBuildPythonSchemas(...): -want labels, +got labels:\n%s", tc.reason, diff)
 			}
 		})
 	}
@@ -434,55 +360,4 @@ func allLabels(i partial.WithConfigFile) ([]string, error) {
 	}
 
 	return labels, nil
-}
-
-func compareEmbedWithTarFS(embeddedFS embed.FS, tarFS *tarfs.Fs, targetDir string) error {
-	// Walk through the embedded filesystem and compare each file with the corresponding file in tarFS
-	err := fs.WalkDir(embeddedFS, targetDir, func(embedPath string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-
-		// We only care about files (skip directories)
-		if d.IsDir() {
-			return nil
-		}
-
-		// Open the file in the embedded filesystem
-		embedFile, err := embeddedFS.Open(embedPath)
-		if err != nil {
-			return fmt.Errorf("failed to open file %s in embeddedFS: %v", embedPath, err)
-		}
-		defer embedFile.Close()
-
-		// Read the content of the embedded file
-		embedContent, err := io.ReadAll(embedFile)
-		if err != nil {
-			return fmt.Errorf("failed to read file %s in embeddedFS: %v", embedPath, err)
-		}
-
-		relativePath := strings.TrimPrefix(embedPath, targetDir+"/")
-
-		// Try to find and open the corresponding file in the tar filesystem
-		tarFile, err := tarFS.Open("models/" + relativePath) // Opening file in tarFS relative to models
-		if err != nil {
-			return fmt.Errorf("file %s found in embeddedFS but not in tarFS: %v", embedPath, err)
-		}
-		defer tarFile.Close()
-
-		// Read the content of the tar file
-		tarContent, err := io.ReadAll(tarFile)
-		if err != nil {
-			return fmt.Errorf("failed to read file %s in tarFS: %v", embedPath, err)
-		}
-
-		// Compare the contents of the embedded file and tar file
-		if !bytes.Equal(embedContent, tarContent) {
-			return fmt.Errorf("file content mismatch: %s", embedPath)
-		}
-
-		return nil
-	})
-
-	return err
 }

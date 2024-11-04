@@ -153,7 +153,7 @@ func GenerateSchemaPython(ctx context.Context, fromFS afero.Fs, exclude []string
 	}
 
 	// reorganization alignment https://github.com/koxudaxi/datamodel-code-generator/issues/2097
-	if err := reorganizeAndAdjustImports(crdFS, pythonGeneratedFolder, pythonAdoptModelsStructure); err != nil {
+	if err := transformStructurePython(crdFS, pythonGeneratedFolder, pythonAdoptModelsStructure); err != nil {
 		return nil, err
 	}
 
@@ -174,8 +174,8 @@ func appendOpenAPIPath(crdFS afero.Fs, bs []byte, path, baseFolder string, openA
 	return nil
 }
 
-// reorganizeAndAdjustImports combines the reorganization of Python files and the adjustment of import paths into one pass
-func reorganizeAndAdjustImports(fs afero.Fs, sourceDir, targetDir string) error { //nolint:gocyclo
+// transformStructurePython combines the reorganization of Python files and the adjustment of import paths into one pass
+func transformStructurePython(fs afero.Fs, sourceDir, targetDir string) error { //nolint:gocyclo
 	v1MetaCopied := false // Flag to track if v1.py has already been moved
 	createdInitFiles := make(map[string]bool)
 

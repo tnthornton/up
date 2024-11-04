@@ -384,10 +384,19 @@ type MockSchemaRunner struct{}
 
 func (m MockSchemaRunner) Generate(ctx context.Context, fs afero.Fs, folder string, imageName string, args []string) error {
 	// Simulate generation for KCL schema files
-	if strings.Contains(imageName, "kcl") { // Check for KCL specific marker, if any
-		outputPath := "models/v1alpha1/platform_acme_co_v1alpha1_subnetwork.k"
+	// Simulate generation for KCL schema files
+	if strings.Contains(imageName, "kcl") { // Check for KCL-specific marker, if any
+		// Create the main KCL schema file
+		kclOutputPath := "models/v1alpha1/platform_acme_co_v1alpha1_subnetwork.k"
 		_ = fs.MkdirAll("models/v1alpha1/", os.ModePerm)
-		return afero.WriteFile(fs, outputPath, []byte("mock KCL content"), os.ModePerm)
+		if err := afero.WriteFile(fs, kclOutputPath, []byte("mock KCL content"), os.ModePerm); err != nil {
+			return err
+		}
+
+		// Create the additional k8s folder and a file inside
+		k8sOutputPath := "models/k8s/sample_k8s_resource.k"
+		_ = fs.MkdirAll("models/k8s/", os.ModePerm)
+		return afero.WriteFile(fs, k8sOutputPath, []byte("mock K8s content"), os.ModePerm)
 	}
 	// Simulate generation for Python schema files
 	outputPath := "models/workdir/platform_acme_co_v1alpha1_subnetwork/io/k8s/apimachinery/pkg/apis/meta/v1.py"

@@ -316,23 +316,110 @@ func IsFsEmpty(fs afero.Fs) (bool, error) {
 	return isEmpty, nil
 }
 
-// FindAllBaseFolders in filesystem from the rootPath and returns a list of base-level directories within the root folder.
-func FindAllBaseFolders(fs afero.Fs, rootPath string) ([]string, error) {
-	var folders []string
-
-	infos, err := afero.ReadDir(fs, rootPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			// Return nil, nil if the directory does not exist
-			return nil, nil
+// CopyFolder recursively copies directory and all its contents from sourceDir to targetDir.
+func CopyFolder(fs afero.Fs, sourceDir, targetDir string) error {
+	return afero.Walk(fs, sourceDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
 		}
-		return nil, errors.Wrap(err, "failed to read directory")
-	}
-	for _, info := range infos {
+
+		relPath, err := filepath.Rel(sourceDir, path)
+		if err != nil {
+			return errors.Wrapf(err, "failed to determine relative path for %s", path)
+		}
+
+		// Define the target path by joining targetDir with the relative path
+		destPath := filepath.Join(targetDir, relPath)
+
 		if info.IsDir() {
-			folders = append(folders, info.Name())
+			return fs.MkdirAll(destPath, 0755)
 		}
+
+		srcFile, err := fs.Open(path)
+		if err != nil {
+			return errors.Wrapf(err, "failed to open source file %s", path)
+		}
+
+		destFile, err := fs.Create(destPath)
+		if err != nil {
+			return errors.Wrapf(err, "failed to create destination file %s", destPath)
+		}
+
+		_, err = io.Copy(destFile, srcFile)
+		if err != nil {
+			return errors.Wrapf(err, "failed to copy file from %s to %s", path, destPath)
+		}
+
+		return nil
+	})
+}
+
+// CopyFileIfExists copies a file from src to dst if the src file exists.
+func CopyFileIfExists(fs afero.Fs, src, dst string) error {
+	exists, err := afero.Exists(fs, src)
+	if err != nil {
+		return err
 	}
 
-	return folders, nil
+	if !exists {
+		return nil // Skip if the file does not exist
+	}
+
+	// Copy the file
+	srcFile, err := fs.Open(src)
+	if err != nil {
+		return errors.Wrapf(err, "failed to open source file %s", src)
+	}
+
+	destFile, err := fs.Create(dst)
+	if err != nil {
+		return errors.Wrapf(err, "failed to create destination file %s", dst)
+	}
+
+	_, err = io.Copy(destFile, srcFile)
+	if err != nil {
+		return errors.Wrapf(err, "failed to copy file from %s to %s", src, dst)
+	}
+
+	return nil
+}
+
+// FindNestedFoldersWithPattern finds nested folders containing files that match a specified pattern.
+func FindNestedFoldersWithPattern(fs afero.Fs, root string, pattern string) ([]string, error) {
+	var foldersWithFiles []string
+
+	err := afero.Walk(fs, root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Only process directories
+		if !info.IsDir() {
+			return nil
+		}
+
+		// Check if this directory contains any files matching the pattern
+		files, err := afero.ReadDir(fs, path)
+		if err != nil {
+			return err
+		}
+
+		for _, f := range files {
+			if f.IsDir() {
+				continue
+			}
+
+			// Perform the pattern match check
+			match, _ := filepath.Match(pattern, f.Name())
+			if match {
+				// Only add the directory path (not the file path)
+				foldersWithFiles = append(foldersWithFiles, path)
+				break
+			}
+		}
+
+		return nil
+	})
+
+	return foldersWithFiles, err
 }

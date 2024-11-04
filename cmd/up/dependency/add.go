@@ -16,6 +16,7 @@ package dependency
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -112,7 +113,8 @@ func (c *addCmd) AfterApply(kongCtx *kong.Context, p pterm.TextPrinter) error {
 
 	ws, err := workspace.New(wd,
 		workspace.WithFS(fs),
-		workspace.WithPrinter(p),
+		// The user doesn't care about workspace warnings during up dep add.
+		workspace.WithPrinter(&pterm.BasicTextPrinter{Writer: io.Discard}),
 		workspace.WithPermissiveParser(),
 	)
 	if err != nil {

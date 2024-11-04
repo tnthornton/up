@@ -32,7 +32,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/yaml"
 
-	icrd "github.com/upbound/up/internal/crd"
 	"github.com/upbound/up/internal/filesystem"
 	"github.com/upbound/up/internal/project"
 	"github.com/upbound/up/internal/upterm"
@@ -75,11 +74,10 @@ const kclModLockTemplate = `[dependencies]
     version = "0.0.1"
 `
 
-const kclMainTemplate = `{{- if .Versions }}
-{{- range .Versions }}
-import models.{{.}} as {{.}}
+const kclMainTemplate = `{{- if .Imports }}
+{{- range .Imports }}
+import {{.ImportPath}} as {{.Alias}}
 {{- end }}
-import models.k8s.apimachinery.pkg.apis.meta.v1 as metav1
 {{- "\n" }}
 {{- end }}
 oxr = option("params").oxr # observed composite resource
@@ -91,8 +89,21 @@ _metadata = lambda name: str -> any {
     { annotations = { "krm.kcl.dev/composition-resource-name" = name }}
 }
 
-_items = [
+# Example to retrieve variables from "xr"; update as needed
+# _region = "us-east-1"
+# if oxr.spec?.parameters?.region:
+#     _region = oxr.spec.parameters.region
 
+_items = [
+# Example S3 Bucket managed resource configuration; update as needed
+# s3v1beta2.Bucket{
+#     metadata: _metadata("my-bucket")
+#     spec: {
+#         forProvider: {
+#             region: _region
+#         }
+#     }
+# }
 ]
 items = _items
 `
@@ -108,11 +119,14 @@ def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     pass
 `
 
-type kclMainTemplateData struct {
-	Versions []string
-}
 type kclModInfo struct {
 	Name string
+}
+
+// Prepare formatted import paths for the template
+type kclImportStatement struct {
+	ImportPath string
+	Alias      string
 }
 
 type generateCmd struct {
@@ -360,18 +374,23 @@ func (c *generateCmd) generateKCLFiles() (afero.Fs, error) { // nolint:gocyclo
 	if err != nil {
 		return nil, errors.Wrapf(err, "error creating file: %v", mainPath)
 	}
-	versions, err := filesystem.FindAllBaseFolders(c.modelsFS, "kcl/models")
+	foundFolders, err := filesystem.FindNestedFoldersWithPattern(c.modelsFS, "kcl/models", "*.k")
 	if err != nil {
-		return nil, errors.Wrap(err, "error finding version folders")
+		return nil, errors.Wrap(err, "error finding nested version folders")
 	}
-	var filteredVersions []string
-	for _, version := range versions {
-		if icrd.IsKnownAPIVersion(version) {
-			filteredVersions = append(filteredVersions, version)
-		}
+
+	importStatements := make([]kclImportStatement, 0, len(foundFolders))
+	for _, folder := range foundFolders {
+		importPath, alias := formatKclImportPath(folder)
+		importStatements = append(importStatements, kclImportStatement{
+			ImportPath: importPath,
+			Alias:      alias,
+		})
 	}
-	mainTemplateData := kclMainTemplateData{
-		Versions: filteredVersions,
+	mainTemplateData := struct {
+		Imports []kclImportStatement
+	}{
+		Imports: importStatements,
 	}
 	mainTmpl := template.Must(template.New("kcl").Parse(kclMainTemplate))
 	if err := mainTmpl.Execute(file, mainTemplateData); err != nil {
@@ -471,4 +490,22 @@ func (c *generateCmd) readAndUnmarshalComposition() (*v1.Composition, error) {
 	}
 
 	return &comp, nil
+}
+
+// Helper function to convert kcl paths to the desired import format
+func formatKclImportPath(path string) (string, string) {
+	// Find the position of "models" in the path and keep only the part after it
+	modelsIndex := strings.Index(path, "models")
+	if modelsIndex == -1 {
+		return "", ""
+	}
+
+	// Trim everything before "models" and replace slashes with dots
+	importPath := strings.ReplaceAll(path[modelsIndex:], "/", ".")
+
+	// Extract alias using the last two components of the path
+	parts := strings.Split(importPath, ".")
+	alias := parts[len(parts)-2] + parts[len(parts)-1] // e.g., redshiftv1beta1
+
+	return importPath, alias
 }

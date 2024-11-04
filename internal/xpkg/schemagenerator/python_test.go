@@ -23,8 +23,8 @@ import (
 	"github.com/spf13/afero"
 )
 
-// TestReorganizeAndAdjustImports tests reorganizing files and adjusting imports.
-func TestReorganizeAndAdjustImports(t *testing.T) {
+// TestTransformStructurePython tests reorganizing files and adjusting imports.
+func TestTransformStructurePython(t *testing.T) {
 
 	// Test case structure
 	tests := []struct {
@@ -72,7 +72,7 @@ func TestReorganizeAndAdjustImports(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			fs := afero.NewMemMapFs()
 			tt.setupFs(fs)
-			err := reorganizeAndAdjustImports(fs, tt.sourceDir, tt.targetDir)
+			err := transformStructurePython(fs, tt.sourceDir, tt.targetDir)
 
 			if (err != nil) != tt.expectedErrors {
 				t.Fatalf("Expected error: %v, got: %v", tt.expectedErrors, err)

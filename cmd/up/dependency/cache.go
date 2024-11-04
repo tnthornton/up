@@ -17,6 +17,7 @@ package dependency
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -93,7 +94,8 @@ func (c *updateCacheCmd) AfterApply(kongCtx *kong.Context, p pterm.TextPrinter) 
 
 	ws, err := workspace.New(wd,
 		workspace.WithFS(fs),
-		workspace.WithPrinter(p),
+		// The user doesn't care about workspace warnings during up dep update-cache.
+		workspace.WithPrinter(&pterm.BasicTextPrinter{Writer: io.Discard}),
 		workspace.WithPermissiveParser(),
 	)
 	if err != nil {

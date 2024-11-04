@@ -326,74 +326,229 @@ func TestIsFsEmpty(t *testing.T) {
 	}
 }
 
-// TestFindAllBaseFolders tests the FindAllBaseFolders function.
-
-func TestFindAllBaseFolders(t *testing.T) {
+func TestCopyFolder(t *testing.T) {
 	tests := []struct {
-		name      string
-		setupFs   func(fs afero.Fs)
-		expected  []string
-		expectErr bool
+		name        string
+		setupFs     func(fs afero.Fs)
+		sourceDir   string
+		targetDir   string
+		expectedErr bool
+		verifyFs    func(fs afero.Fs, t *testing.T)
 	}{
 		{
-			name: "NonExistentRootPath",
+			name:      "CopyEmptyDirectory",
+			sourceDir: "/source",
+			targetDir: "/target",
 			setupFs: func(fs afero.Fs) {
-				// No setup, root path does not exist
+				fs.MkdirAll("/source", os.ModePerm)
 			},
-			expected:  nil, // Expected nil when root path doesn't exist
-			expectErr: false,
+			expectedErr: false,
+			verifyFs: func(fs afero.Fs, t *testing.T) {
+				exists, err := afero.DirExists(fs, "/target")
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				if !exists {
+					t.Errorf("expected target directory to exist, but it does not")
+				}
+			},
 		},
 		{
-			name: "EmptyFileSystem",
+			name:      "CopySingleFile",
+			sourceDir: "/source",
+			targetDir: "/target",
 			setupFs: func(fs afero.Fs) {
-				// No setup, empty filesystem
+				fs.MkdirAll("/source", os.ModePerm)
+				afero.WriteFile(fs, "/source/file1.txt", []byte("content"), 0644)
 			},
-			expected:  []string{},
-			expectErr: false,
+			expectedErr: false,
+			verifyFs: func(fs afero.Fs, t *testing.T) {
+				exists, err := afero.Exists(fs, "/target/file1.txt")
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				if !exists {
+					t.Errorf("expected file to be copied to target, but it does not exist")
+				}
+
+				content, err := afero.ReadFile(fs, "/target/file1.txt")
+				if err != nil {
+					t.Errorf("unexpected error reading file: %v", err)
+				}
+				if string(content) != "content" {
+					t.Errorf("expected file content 'content', got '%s'", string(content))
+				}
+			},
 		},
 		{
-			name: "SingleFolderInRoot",
+			name:      "CopyNestedDirectories",
+			sourceDir: "/source",
+			targetDir: "/target",
 			setupFs: func(fs afero.Fs) {
-				fs.MkdirAll("/folder1", os.ModePerm)
+				fs.MkdirAll("/source/dir1/dir2", os.ModePerm)
+				afero.WriteFile(fs, "/source/dir1/file1.txt", []byte("file1 content"), 0644)
+				afero.WriteFile(fs, "/source/dir1/dir2/file2.txt", []byte("file2 content"), 0644)
 			},
-			expected:  []string{"folder1"},
-			expectErr: false,
+			expectedErr: false,
+			verifyFs: func(fs afero.Fs, t *testing.T) {
+				exists, err := afero.Exists(fs, "/target/dir1/file1.txt")
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				if !exists {
+					t.Errorf("expected file1 to be copied to target, but it does not exist")
+				}
+
+				exists, err = afero.Exists(fs, "/target/dir1/dir2/file2.txt")
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				if !exists {
+					t.Errorf("expected file2 to be copied to target, but it does not exist")
+				}
+
+				content1, err := afero.ReadFile(fs, "/target/dir1/file1.txt")
+				if err != nil {
+					t.Errorf("unexpected error reading file1: %v", err)
+				}
+				if string(content1) != "file1 content" {
+					t.Errorf("expected file1 content 'file1 content', got '%s'", string(content1))
+				}
+
+				content2, err := afero.ReadFile(fs, "/target/dir1/dir2/file2.txt")
+				if err != nil {
+					t.Errorf("unexpected error reading file2: %v", err)
+				}
+				if string(content2) != "file2 content" {
+					t.Errorf("expected file2 content 'file2 content', got '%s'", string(content2))
+				}
+			},
 		},
 		{
-			name: "MultipleFoldersInRoot",
-			setupFs: func(fs afero.Fs) {
-				fs.MkdirAll("/folder1", os.ModePerm)
-				fs.MkdirAll("/folder2", os.ModePerm)
+			name:        "SourceDirDoesNotExist",
+			sourceDir:   "/nonexistent",
+			targetDir:   "/target",
+			setupFs:     func(fs afero.Fs) {},
+			expectedErr: true,
+			verifyFs: func(fs afero.Fs, t *testing.T) {
+				exists, err := afero.DirExists(fs, "/target")
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				if exists {
+					t.Errorf("expected target directory not to exist when source does not exist, but it does")
+				}
 			},
-			expected:  []string{"folder1", "folder2"},
-			expectErr: false,
-		},
-		{
-			name: "NestedFolders",
-			setupFs: func(fs afero.Fs) {
-				fs.MkdirAll("/folder1/subfolder", os.ModePerm)
-				fs.MkdirAll("/folder2", os.ModePerm)
-			},
-			expected:  []string{"folder1", "folder2"},
-			expectErr: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fs := afero.NewMemMapFs()
-
 			tt.setupFs(fs)
 
-			folders, err := FindAllBaseFolders(fs, "/")
-
-			if tt.expectErr {
-				require.Error(t, err)
-			} else {
-				require.NoError(t, err)
+			err := CopyFolder(fs, tt.sourceDir, tt.targetDir)
+			if tt.expectedErr && err == nil {
+				t.Errorf("expected an error, but got none")
+			} else if !tt.expectedErr && err != nil {
+				t.Errorf("unexpected error: %v", err)
 			}
 
-			require.ElementsMatch(t, tt.expected, folders)
+			tt.verifyFs(fs, t)
+		})
+	}
+}
+
+func TestCopyFileIfExists(t *testing.T) {
+	tests := []struct {
+		name        string
+		setupFs     func(fs afero.Fs)
+		src         string
+		dst         string
+		expectedErr bool
+		verifyFs    func(fs afero.Fs, t *testing.T)
+	}{
+		{
+			name: "SourceFileExists",
+			src:  "/source/file.txt",
+			dst:  "/destination/file.txt",
+			setupFs: func(fs afero.Fs) {
+				fs.MkdirAll("/source", os.ModePerm)
+				afero.WriteFile(fs, "/source/file.txt", []byte("file content"), 0644)
+			},
+			expectedErr: false,
+			verifyFs: func(fs afero.Fs, t *testing.T) {
+				exists, err := afero.Exists(fs, "/destination/file.txt")
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				if !exists {
+					t.Errorf("expected destination file to exist, but it does not")
+				}
+
+				content, err := afero.ReadFile(fs, "/destination/file.txt")
+				if err != nil {
+					t.Errorf("unexpected error reading file: %v", err)
+				}
+				if string(content) != "file content" {
+					t.Errorf("expected file content 'file content', got '%s'", string(content))
+				}
+			},
+		},
+		{
+			name: "SourceFileDoesNotExist",
+			src:  "/source/nonexistent.txt",
+			dst:  "/destination/file.txt",
+			setupFs: func(fs afero.Fs) {
+				fs.MkdirAll("/source", os.ModePerm)
+			},
+			expectedErr: false,
+			verifyFs: func(fs afero.Fs, t *testing.T) {
+				exists, err := afero.Exists(fs, "/destination/file.txt")
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				if exists {
+					t.Errorf("expected destination file not to exist when source does not exist")
+				}
+			},
+		},
+		{
+			name: "OverwriteDestinationFile",
+			src:  "/source/file.txt",
+			dst:  "/destination/file.txt",
+			setupFs: func(fs afero.Fs) {
+				fs.MkdirAll("/source", os.ModePerm)
+				fs.MkdirAll("/destination", os.ModePerm)
+				afero.WriteFile(fs, "/source/file.txt", []byte("new content"), 0644)
+				afero.WriteFile(fs, "/destination/file.txt", []byte("old content"), 0644)
+			},
+			expectedErr: false,
+			verifyFs: func(fs afero.Fs, t *testing.T) {
+				content, err := afero.ReadFile(fs, "/destination/file.txt")
+				if err != nil {
+					t.Errorf("unexpected error reading file: %v", err)
+				}
+				if string(content) != "new content" {
+					t.Errorf("expected file content 'new content', got '%s'", string(content))
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := afero.NewMemMapFs()
+			tt.setupFs(fs)
+
+			err := CopyFileIfExists(fs, tt.src, tt.dst)
+			if tt.expectedErr && err == nil {
+				t.Errorf("expected an error, but got none")
+			} else if !tt.expectedErr && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+
+			tt.verifyFs(fs, t)
 		})
 	}
 }
