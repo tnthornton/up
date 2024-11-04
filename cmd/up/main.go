@@ -30,7 +30,6 @@ import (
 	"github.com/upbound/up/cmd/up/example"
 	"github.com/upbound/up/cmd/up/function"
 	"github.com/upbound/up/cmd/up/group"
-	"github.com/upbound/up/cmd/up/local"
 	"github.com/upbound/up/cmd/up/login"
 	"github.com/upbound/up/cmd/up/migration"
 	"github.com/upbound/up/cmd/up/organization"
@@ -119,7 +118,6 @@ type cli struct {
 	XRD         xrd.Cmd         `cmd:"" group:"Develop with Crossplane" help:"Manage XRDs from Composite Resources(XR) or Claims(XRC)."`
 	Composition composition.Cmd `cmd:"" group:"Develop with Crossplane" help:"Manage Compositions."`
 	Function    function.Cmd    `cmd:"" group:"Develop with Crossplane" help:"Manage Functions."`
-	Local       local.Cmd       `cmd:"" group:"Develop with Crossplane" help:"Interact with a local development control plane."`
 	XPKG        xpkg.Cmd        `cmd:"" group:"Develop with Crossplane" maturity:"deprecated" help:"Deprecated. Please migrate to up project or use the crossplane CLI."`
 	XPLS        xpls.Cmd        `cmd:"" group:"Develop with Crossplane" help:"Start xpls language server."`
 
