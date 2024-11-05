@@ -46,7 +46,7 @@ var (
 	packagesFS embed.FS
 
 	//go:embed testdata/project-embedded-functions/.up/**
-	modelsKclFS embed.FS
+	modelsFS embed.FS
 )
 
 // TestGenerateCmd_Run tests the Run method of the generateCmd struct.
@@ -107,7 +107,7 @@ func TestGenerateCmd_Run(t *testing.T) {
 			assert.NilError(t, err)
 
 			testPkgFS := afero.NewBasePathFs(afero.FromIOFS{FS: packagesFS}, "testdata/packages")
-			testmodelsKclFS := afero.NewBasePathFs(afero.FromIOFS{FS: modelsKclFS}, "testdata/project-embedded-functions/.up")
+			testModelsFS := afero.NewBasePathFs(afero.FromIOFS{FS: modelsFS}, "testdata/project-embedded-functions/.up")
 			r := image.NewResolver(
 				image.WithFetcher(
 					&image.FSFetcher{FS: testPkgFS},
@@ -135,7 +135,7 @@ func TestGenerateCmd_Run(t *testing.T) {
 			c := &generateCmd{
 				ProjectFile:       "upbound.yaml",
 				projFS:            projFS,
-				modelsFS:          testmodelsKclFS,
+				modelsFS:          testModelsFS,
 				functionFS:        functionFS,
 				Language:          tc.language,
 				CompositionPath:   tc.compositionPath,

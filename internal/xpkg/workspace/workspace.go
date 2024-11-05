@@ -206,6 +206,10 @@ func (w *Workspace) Parse(ctx context.Context) error {
 			return err
 		}
 		if info.IsDir() {
+			// skip warnings for ci workflow .yamls inside .github folder
+			if info.Name() == ".github" {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 

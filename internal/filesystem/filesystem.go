@@ -149,7 +149,9 @@ func FSToTar(f afero.Fs, prefix string, opts ...FSToTarOption) ([]byte, error) {
 			// Since symlink points outside BasePathFs, use osFs to resolve it
 			targetPath, err := filepath.EvalSymlinks(symlinkBasePath)
 			if err != nil {
-				return err
+				// The symlink target may be missing, which can occur when dependencies are only referenced without schemas.
+				// It's safe to skip these symlinks by returning nil, allowing the packaging to continue without interruption.
+				return nil // nolint:nilerr
 			}
 
 			// Ensure the symlink target exists in the real filesystem (OsFs)
@@ -238,15 +240,6 @@ func FSToTar(f afero.Fs, prefix string, opts ...FSToTarOption) ([]byte, error) {
 }
 
 func CreateSymlink(targetFS *afero.BasePathFs, targetPath string, sourceFS *afero.BasePathFs, sourcePath string) error {
-	// Check if the source path exists in sourceFS
-	sourceExists, err := afero.Exists(sourceFS, sourcePath)
-	if err != nil {
-		return errors.Wrapf(err, "failed to check existence of source path: %s", sourcePath)
-	}
-	if !sourceExists {
-		return errors.Errorf("source directory does not exist: %s", sourcePath)
-	}
-
 	// Get the real path for targetPath inside targetFS
 	realTargetPath, err := targetFS.RealPath(targetPath)
 	if err != nil {

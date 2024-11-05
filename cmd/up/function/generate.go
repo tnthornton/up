@@ -300,13 +300,10 @@ func (c *generateCmd) Run(ctx context.Context, p pterm.TextPrinter) error { // n
 
 			modelsPath := ".up/" + c.Language + "/models"
 
-			// Check if the path exists, possible we using deps without schemas so symlink is not possible
-			if exists, _ := afero.Exists(c.projFS.(*afero.BasePathFs), modelsPath); exists {
-				// If the path exists, create the symlink
-				if err := filesystem.CreateSymlink(c.functionFS.(*afero.BasePathFs), "model", c.projFS.(*afero.BasePathFs), modelsPath); err != nil {
-					return errors.Wrapf(err, "error creating models symlink")
-				}
+			if err := filesystem.CreateSymlink(c.functionFS.(*afero.BasePathFs), "model", c.projFS.(*afero.BasePathFs), modelsPath); err != nil {
+				return errors.Wrapf(err, "error creating models symlink")
 			}
+
 			return nil
 		})
 	if err != nil {
@@ -374,10 +371,7 @@ func (c *generateCmd) generateKCLFiles() (afero.Fs, error) { // nolint:gocyclo
 	if err != nil {
 		return nil, errors.Wrapf(err, "error creating file: %v", mainPath)
 	}
-	foundFolders, err := filesystem.FindNestedFoldersWithPattern(c.modelsFS, "kcl/models", "*.k")
-	if err != nil {
-		return nil, errors.Wrap(err, "error finding nested version folders")
-	}
+	foundFolders, _ := filesystem.FindNestedFoldersWithPattern(c.modelsFS, "kcl/models", "*.k")
 
 	importStatements := make([]kclImportStatement, 0, len(foundFolders))
 	for _, folder := range foundFolders {

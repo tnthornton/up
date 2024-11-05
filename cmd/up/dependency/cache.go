@@ -17,7 +17,6 @@ package dependency
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 
@@ -34,7 +33,7 @@ import (
 )
 
 const (
-	errMetaFileNotFound = "metadata file (crossplane.yaml or upbound.yaml) not found in current directory"
+	errMetaFileNotFound = "metadata file (crossplane.yaml or upbound.yaml) not found in current directory or is malformed"
 )
 
 // updateCacheCmd updates the cache.
@@ -94,8 +93,7 @@ func (c *updateCacheCmd) AfterApply(kongCtx *kong.Context, p pterm.TextPrinter) 
 
 	ws, err := workspace.New(wd,
 		workspace.WithFS(fs),
-		// The user doesn't care about workspace warnings during up dep update-cache.
-		workspace.WithPrinter(&pterm.BasicTextPrinter{Writer: io.Discard}),
+		workspace.WithPrinter(p),
 		workspace.WithPermissiveParser(),
 	)
 	if err != nil {
