@@ -300,6 +300,18 @@ func (o *Organization) Items(ctx context.Context, upCtx *upbound.Context, navCtx
 					}
 				}
 
+				if space.Labels[upboundv1alpha1.SpaceInaccessibleLabelKey] == "true" {
+					mu.Lock()
+					unselectableItems = append(unselectableItems, item{
+						text:          space.GetObjectMeta().GetName() + " (requires tier upgrade)",
+						kind:          "space",
+						notSelectable: true,
+						matchingTerms: []string{space.GetObjectMeta().GetName()},
+					})
+					mu.Unlock()
+					continue
+				}
+
 				if space.Status.ConnectionDetails.Status == upboundv1alpha1.ConnectionStatusUnreachable {
 					mu.Lock()
 					unselectableItems = append(unselectableItems, item{

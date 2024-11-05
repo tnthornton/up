@@ -971,10 +971,10 @@ github.com/ugorji/go v1.2.11/go.mod h1:2CGjQPolsidfhgBxo2wBo1Xh48rJWqUepV6q7OMkd
 github.com/ugorji/go/codec v1.2.11/go.mod h1:UNopzCgEMSXjBc6AOMqYvWC1ktqTAfzJZUZgYf6w6lg=
 github.com/ulikunitz/xz v0.5.12 h1:37Nm15o69RwBkXM0J6A5OlE67RZTfzUxTj8fB3dfcsc=
 github.com/ulikunitz/xz v0.5.12/go.mod h1:nbz6k7qbPmH4IRqmfOplQw/tblSgqTqBwxkY0oWt/14=
-github.com/upbound/up-sdk-go v0.3.1-0.20241101184205-29204b449129 h1:e8t++e2Ynq/RYGrVGglByCTu2FzrGsSmqjwR12eVTiU=
-github.com/upbound/up-sdk-go v0.3.1-0.20241101184205-29204b449129/go.mod h1:Y7uBp79VDN4JKYrANTqlr/O+NFpd1mEMUUDij4JInbQ=
-github.com/upbound/up-sdk-go/apis v1.8.1-0.20241018115012-f6c25d228e01 h1:jacn+yVzHPEJvTHcFs9cJJCiaHiI01LJfEaTxQKDM0I=
-github.com/upbound/up-sdk-go/apis v1.8.1-0.20241018115012-f6c25d228e01/go.mod h1:Y052hGLZNRTt/iBa8GLHcGM5PfzmymXGAgxqxmmfkMI=
+github.com/upbound/up-sdk-go v0.3.1-0.20241105002627-7457ae3c39ea h1:58ebzh96DGdDuYq3hkdoe1QxHy4uzamnri32SPl6Zmo=
+github.com/upbound/up-sdk-go v0.3.1-0.20241105002627-7457ae3c39ea/go.mod h1:Y7uBp79VDN4JKYrANTqlr/O+NFpd1mEMUUDij4JInbQ=
+github.com/upbound/up-sdk-go/apis v1.8.1-0.20241105002627-7457ae3c39ea h1:zEg+uaCQtLNWgMxAUsN+OMESE6k8iQEf/TjhDmr0uAI=
+github.com/upbound/up-sdk-go/apis v1.8.1-0.20241105002627-7457ae3c39ea/go.mod h1:Y052hGLZNRTt/iBa8GLHcGM5PfzmymXGAgxqxmmfkMI=
 github.com/vbatts/tar-split v0.11.5 h1:3bHCTIheBm1qFTcgh9oPu+nNBtX+XJIupG/vacinCts=
 github.com/vbatts/tar-split v0.11.5/go.mod h1:yZbwRsSeGjusneWgA781EKej9HF8vme8okylkAeNKLk=
 github.com/vladimirvivien/gexe v0.2.0 h1:nbdAQ6vbZ+ZNsolCgSVb9Fno60kzSuvtzVh6Ytqi/xY=
