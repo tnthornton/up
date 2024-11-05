@@ -24,13 +24,14 @@ oci:
         image: xpkg.upbound.io/spaces-artifacts/kube-controller-manager
       - pathNavigatorType: kubeVersionPath
         image: xpkg.upbound.io/spaces-artifacts/kube-scheduler
+      - pathNavigatorType: xgqlVersionPath
+        image: xpkg.upbound.io/spaces-artifacts/xgql
     images:
       - image: "xpkg.upbound.io/spaces-artifacts/hyperspace"
         compatibleChartVersion: ">=1.6"
       - image: "xpkg.upbound.io/spaces-artifacts/mxe-composition-templates"
         compatibleChartVersion: "1.5.x"
       - image: "xpkg.upbound.io/spaces-artifacts/mxp-authz-webhook"
-        # starting from v1.7.0, mxp-authz-webhook chart is removed
         compatibleChartVersion: "<=1.6.x"
       - image: "xpkg.upbound.io/spaces-artifacts/mxp-benchmark"
       - image: "xpkg.upbound.io/spaces-artifacts/mxp-charts"
@@ -55,17 +56,29 @@ oci:
       - image: "xpkg.upbound.io/spaces-artifacts/coredns:latest"
       - image: "xpkg.upbound.io/spaces-artifacts/envoy:v1.26-latest"
       - image: "xpkg.upbound.io/spaces-artifacts/etcd:3.5.6-0"
+        compatibleChartVersion: "<=1.7.x"
+      - image: "xpkg.upbound.io/spaces-artifacts/etcd:3.5.15-0"
+        compatibleChartVersion: ">=1.8.x"
+      - image: "xpkg.upbound.io/spaces-artifacts/external-secrets-chart:0.10.4-up.1"
+        compatibleChartVersion: ">=1.9.0"
       - image: "xpkg.upbound.io/spaces-artifacts/external-secrets:v0.9.11-3.g8e279dea"
+        compatibleChartVersion: "<1.8.0"
+      - image: "xpkg.upbound.io/spaces-artifacts/external-secrets:v0.10.4-up.1"
+        compatibleChartVersion: ">=1.9.0"
+      - image: "xpkg.upbound.io/spaces-artifacts/external-secrets:v0.9.20-up.1"
+        compatibleChartVersion: ">=1.8.0"
       - image: "xpkg.upbound.io/spaces-artifacts/kine:v0.0.0-224.g6a07aa9"
       - image: "xpkg.upbound.io/spaces-artifacts/kube-state-metrics:v2.8.1-upbound003"
       - image: "xpkg.upbound.io/spaces-artifacts/kubectl:1.29"
+        compatibleChartVersion: "<=1.7.x"
+      - image: "xpkg.upbound.io/spaces-artifacts/kubectl:1.31.0"
+        compatibleChartVersion: ">=1.8.x"
       - image: "xpkg.upbound.io/spaces-artifacts/kyverno-background-controller:v1.11.4"
       - image: "xpkg.upbound.io/spaces-artifacts/kyverno-cleanup-controller:v1.11.4"
       - image: "xpkg.upbound.io/spaces-artifacts/kyverno-kyverno:v1.11.4"
       - image: "xpkg.upbound.io/spaces-artifacts/kyverno-kyvernopre:v1.11.4"
       - image: "xpkg.upbound.io/spaces-artifacts/kyverno-reports-controller:v1.11.4"
       - image: "xpkg.upbound.io/spaces-artifacts/mxp-authz-webhook-openssl:3.1.4"
-        # starting from v1.7.0, mxp-authz-webhook chart is removed
         compatibleChartVersion: "<=1.6.x"
       - image: "xpkg.upbound.io/spaces-artifacts/opentelemetry-collector-contrib:0.98.0"
       - image: "xpkg.upbound.io/spaces-artifacts/uxp-bootstrapper:v1.10.4-up.2"
@@ -74,4 +87,12 @@ oci:
         compatibleChartVersion: "1.5.x"
       - image: "xpkg.upbound.io/spaces-artifacts/vcluster:0.15.7"
       - image: "xpkg.upbound.io/spaces-artifacts/vector:0.30.0-distroless-libc"
-      - image: "xpkg.upbound.io/spaces-artifacts/xgql:v0.2.0-rc.0.153.g0a1d4ae"
+        compatibleChartVersion: "<1.8.0"
+      - image: "xpkg.upbound.io/spaces-artifacts/vector:0.41.1-distroless-libc"
+        compatibleChartVersion: ">=1.8.0"
+  - chart: "xpkg.upbound.io/spaces-artifacts/agent:0.0.0-441.g68777b9"
+    subResources:
+      - pathNavigatorType: imageTag
+        image: xpkg.upbound.io/spaces-artifacts/agent
+      - pathNavigatorType: registerImageTag
+        image: xpkg.upbound.io/spaces-artifacts/register-init
