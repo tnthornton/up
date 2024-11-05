@@ -68,7 +68,7 @@ func TestNewComposition(t *testing.T) {
 		embeddedFS embed.FS
 		want       want
 	}{
-		"CompositionWithAnnotationsAndName": {
+		"CompositionWithLabelsAndName": {
 			name:       "xyz",
 			embeddedFS: projectAFS,
 			packages:   afero.NewBasePathFs(afero.FromIOFS{FS: packagesFS}, "testdata/packages"),
@@ -80,7 +80,7 @@ func TestNewComposition(t *testing.T) {
 					},
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "xyz.xnetworks.aws.platform.upbound.io",
-						Annotations: map[string]string{
+						Labels: map[string]string{
 							"cloud": "aws",
 							"type":  "network",
 						},
@@ -134,7 +134,7 @@ func TestNewComposition(t *testing.T) {
 				err: "",
 			},
 		},
-		"CompositionWithoutAnnotations": {
+		"CompositionWithoutLabels": {
 			embeddedFS: projectBFS,
 			packages:   afero.NewBasePathFs(afero.FromIOFS{FS: packagesBFS}, "testdata/packagesB"),
 			want: want{
@@ -144,8 +144,7 @@ func TestNewComposition(t *testing.T) {
 						APIVersion: "apiextensions.crossplane.io/v1",
 					},
 					ObjectMeta: metav1.ObjectMeta{
-						Name:        "xnetworks.aws.platform.upbound.io",
-						Annotations: map[string]string{},
+						Name: "xnetworks.aws.platform.upbound.io",
 					},
 					Spec: v1.CompositionSpec{
 						CompositeTypeRef: v1.TypeReference{
@@ -177,8 +176,7 @@ func TestNewComposition(t *testing.T) {
 						APIVersion: "apiextensions.crossplane.io/v1",
 					},
 					ObjectMeta: metav1.ObjectMeta{
-						Name:        "xpostgreses.aws.platform.upbound.io",
-						Annotations: map[string]string{},
+						Name: "xpostgreses.aws.platform.upbound.io",
 					},
 					Spec: v1.CompositionSpec{
 						CompositeTypeRef: v1.TypeReference{

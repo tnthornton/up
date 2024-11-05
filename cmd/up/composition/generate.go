@@ -65,12 +65,12 @@ Examples:
 		Saves output to 'apis/xnetworks/composition.yaml'.
 
     composition generate examples/network/network-aws.yaml --name aws
-        Generates a composition from the Composite Resource Claim (XRC) with annotations
+        Generates a composition from the Composite Resource Claim (XRC) with labels
 		if 'spec.compositionSelector.matchLabels' is set in the XR, using 'aws' as a prefix in 'metadata.name'.
 		Saves output to 'apis/xnetworks/composition-aws.yaml'.
 
     composition generate examples/xnetwork/xnetwork-azure.yaml --name azure
-        Generates a composition from the Composite Resource (XR) or Composite Resource Claim (XRC) with annotations
+        Generates a composition from the Composite Resource (XR) or Composite Resource Claim (XRC) with labels
 		if 'spec.compositionSelector.matchLabels' is set in the XR, using 'azure' as a prefix in 'metadata.name'.
 		Saves output to 'apis/xnetworks/composition-azure.yaml'.
 
@@ -213,10 +213,16 @@ func (c *generateCmd) Run(ctx context.Context, p pterm.TextPrinter) error { // n
 		"apiVersion": composition.APIVersion,
 		"kind":       composition.Kind,
 		"metadata": map[string]interface{}{
-			"name":        composition.ObjectMeta.Name,
-			"annotations": composition.ObjectMeta.Annotations,
+			"name": composition.ObjectMeta.Name,
 		},
 		"spec": composition.Spec,
+	}
+
+	// Add labels if they exist
+	if len(composition.ObjectMeta.Labels) > 0 {
+		if metadata, ok := compositionClean["metadata"].(map[string]interface{}); ok {
+			metadata["labels"] = composition.ObjectMeta.Labels
+		}
 	}
 
 	// Convert Composition to YAML format
@@ -257,6 +263,10 @@ func (c *generateCmd) Run(ctx context.Context, p pterm.TextPrinter) error { // n
 			if !result {
 				return errors.New("operation cancelled by user")
 			}
+		}
+
+		if err := c.apisFS.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+			return errors.Wrap(err, "failed to create directories for the specified output path")
 		}
 
 		// Write the YAML to the specified output file
@@ -309,8 +319,7 @@ func (c *generateCmd) newComposition(ctx context.Context) (*v1.Composition, stri
 			Kind:       v1.CompositionGroupVersionKind.Kind,
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:        name,
-			Annotations: matchLabels,
+			Name: name,
 		},
 		Spec: v1.CompositionSpec{
 			CompositeTypeRef: v1.TypeReference{
@@ -321,6 +330,11 @@ func (c *generateCmd) newComposition(ctx context.Context) (*v1.Composition, stri
 			Pipeline: pipelineSteps,
 		},
 	}
+
+	if len(matchLabels) > 0 {
+		composition.Labels = matchLabels
+	}
+
 	return composition, plural, nil
 }
 
