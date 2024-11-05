@@ -1,0 +1,33 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xnetworks.aws.platform.upbound.io
+spec:
+  group: aws.platform.upbound.io
+  names:
+    categories:
+    - crossplane
+    kind: XNetwork
+    plural: xnetworks
+  versions:
+  - name: v1alpha1
+    referenceable: true
+    schema:
+      openAPIV3Schema:
+        description: XNetwork is the Schema for the XNetwork API.
+        properties:
+          spec:
+            description: XNetworkSpec defines the desired state of XNetwork.
+            properties:
+              id:
+                type: string
+              region:
+                type: string
+            type: object
+          status:
+            description: XNetworkStatus defines the observed state of XNetwork.
+            type: object
+        required:
+        - spec
+        type: object
+    served: true

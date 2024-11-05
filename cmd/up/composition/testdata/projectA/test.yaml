@@ -1,0 +1,11 @@
+apiVersion: aws.platform.upbound.io/v1alpha1
+kind: XNetwork
+metadata:
+  name: xnetwork-aws
+spec:
+  compositionSelector:
+    matchLabels:
+      cloud: "aws"
+      type: "network"
+  id: "test"
+  region: "eu-west-2"

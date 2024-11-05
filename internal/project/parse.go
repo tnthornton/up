@@ -48,7 +48,7 @@ func Parse(projFS afero.Fs, projFilePath string) (*v1alpha1.Project, error) {
 	}
 
 	if project.Spec.Paths.APIs == "" {
-		project.Spec.Paths.APIs = "/"
+		project.Spec.Paths.APIs = "/apis"
 	} else {
 		project.Spec.Paths.APIs = filepath.Clean(filepath.Join("/", project.Spec.Paths.APIs))
 	}

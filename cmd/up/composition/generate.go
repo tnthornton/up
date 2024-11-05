@@ -18,20 +18,25 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/alecthomas/kong"
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
 	v1 "github.com/crossplane/crossplane/apis/apiextensions/v1"
 	"github.com/crossplane/crossplane/apis/pkg/v1beta1"
+	"github.com/gobuffalo/flect"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/pterm/pterm"
 	"github.com/spf13/afero"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	xcrd "github.com/upbound/up/internal/crd"
+	"github.com/upbound/up/internal/project"
 	"github.com/upbound/up/internal/xpkg"
 	"github.com/upbound/up/internal/xpkg/dep"
 	"github.com/upbound/up/internal/xpkg/dep/cache"
@@ -45,6 +50,35 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/yaml"
 )
+
+func (c *generateCmd) Help() string {
+	return `
+The 'generate' command creates a composition and adds the required function packages to the project as dependencies.
+
+Examples:
+    composition generate apis/xnetwork/definition.yaml
+        Generates a composition from an CompositeResourceDefinition (XRD).
+		Saves output to 'apis/xnetworks/composition.yaml'.
+
+    composition generate examples/xnetwork/xnetwork.yaml
+        Generates a composition from an Composite Resource (XR).
+		Saves output to 'apis/xnetworks/composition.yaml'.
+
+    composition generate examples/network/network-aws.yaml --name aws
+        Generates a composition from the Composite Resource Claim (XRC) with annotations
+		if 'spec.compositionSelector.matchLabels' is set in the XR, using 'aws' as a prefix in 'metadata.name'.
+		Saves output to 'apis/xnetworks/composition-aws.yaml'.
+
+    composition generate examples/xnetwork/xnetwork-azure.yaml --name azure
+        Generates a composition from the Composite Resource (XR) or Composite Resource Claim (XRC) with annotations
+		if 'spec.compositionSelector.matchLabels' is set in the XR, using 'azure' as a prefix in 'metadata.name'.
+		Saves output to 'apis/xnetworks/composition-azure.yaml'.
+
+    composition generate examples/xdatabase/database.yaml --plural postgreses
+        Generates a composition from the Composite Resource (XR) with a custom plural form,
+		Saves output to 'apis/xdatabases/composition.yaml'.
+`
+}
 
 const (
 	outputFile            = "file"
@@ -78,11 +112,18 @@ var patTemplate = `{
 }`
 
 type generateCmd struct {
-	XRD         string `arg:"" help:"File path to the Crossplane Resource Definition (XRD) YAML file."`
-	Path        string `help:"Optional path to the output file where the generated Composition will be saved." optional:""`
+	Resource string `arg:"" required:"" help:"File path to Composite Resource Claim (XRC) or Composite Resource (XR) or CompositeResourceDefinition (XRD)."`
+	Name     string `optional:"" help:"Name for the new composition."`
+	Plural   string `optional:"" help:"Optional custom plural for the CompositeTypeRef.Kind"`
+
+	Path        string `optional:""  help:"Optional path to the output file where the generated Composition will be saved."`
 	ProjectFile string `short:"f" help:"Path to project definition file." default:"upbound.yaml"`
 	Output      string `help:"Output format for the results: 'file' to save to a file, 'yaml' to print XRD in YAML format, 'json' to print XRD in JSON format." short:"o" default:"file" enum:"file,yaml,json"`
 	CacheDir    string `short:"d" help:"Directory used for caching dependency images." default:"~/.up/cache/" env:"CACHE_DIR" type:"path"`
+
+	projFS afero.Fs
+	apisFS afero.Fs
+	proj   *projectv1alpha1.Project
 
 	m  *manager.Manager
 	ws *workspace.Workspace
@@ -93,6 +134,28 @@ type generateCmd struct {
 func (c *generateCmd) AfterApply(kongCtx *kong.Context, p pterm.TextPrinter) error {
 	kongCtx.Bind(pterm.DefaultBulletList.WithWriter(kongCtx.Stdout))
 	ctx := context.Background()
+
+	// Read the project file.
+	projFilePath, err := filepath.Abs(c.ProjectFile)
+	if err != nil {
+		return err
+	}
+	// The location of the project file defines the root of the project.
+	projDirPath := filepath.Dir(projFilePath)
+	c.projFS = afero.NewBasePathFs(afero.NewOsFs(), projDirPath)
+
+	// The location of the co position defines the root of the composition.
+	proj, err := project.Parse(c.projFS, c.ProjectFile)
+	if err != nil {
+		return err
+	}
+
+	c.proj = proj
+
+	c.apisFS = afero.NewBasePathFs(
+		c.projFS, proj.Spec.Paths.APIs,
+	)
+
 	fs := afero.NewOsFs()
 
 	cache, err := cache.NewLocal(c.CacheDir, cache.WithFS(fs))
@@ -120,7 +183,8 @@ func (c *generateCmd) AfterApply(kongCtx *kong.Context, p pterm.TextPrinter) err
 
 	ws, err := workspace.New(wd,
 		workspace.WithFS(fs),
-		workspace.WithPrinter(p),
+		// The user doesn't care about workspace warnings during composition generate.
+		workspace.WithPrinter(&pterm.BasicTextPrinter{Writer: io.Discard}),
 		workspace.WithPermissiveParser(),
 	)
 	if err != nil {
@@ -138,31 +202,10 @@ func (c *generateCmd) AfterApply(kongCtx *kong.Context, p pterm.TextPrinter) err
 }
 
 func (c *generateCmd) Run(ctx context.Context, p pterm.TextPrinter) error { // nolint:gocyclo
-	xrdRaw, err := os.ReadFile(c.XRD)
+	pterm.EnableStyling()
+	composition, plural, err := c.newComposition(ctx)
 	if err != nil {
-		return errors.Wrapf(err, "failed to read xrd file")
-	}
-
-	projectRaw, err := os.ReadFile(c.ProjectFile)
-	if err != nil {
-		return errors.Wrapf(err, "failed to read upbound project file")
-	}
-
-	var xrd v1.CompositeResourceDefinition
-	err = yaml.Unmarshal(xrdRaw, &xrd)
-	if err != nil {
-		return errors.Wrapf(err, "failed to unmarshal to xrd")
-	}
-
-	var project projectv1alpha1.Project
-	err = yaml.Unmarshal(projectRaw, &project)
-	if err != nil {
-		return errors.Wrapf(err, "failed to unmarshal to project")
-	}
-
-	composition, err := c.newComposition(ctx, xrd, project)
-	if err != nil {
-		return errors.Wrapf(err, "failed to create composition")
+		return errors.Wrap(err, "failed to create composition")
 	}
 
 	// get rid of metadata.creationTimestamp nil
@@ -170,7 +213,8 @@ func (c *generateCmd) Run(ctx context.Context, p pterm.TextPrinter) error { // n
 		"apiVersion": composition.APIVersion,
 		"kind":       composition.Kind,
 		"metadata": map[string]interface{}{
-			"name": composition.ObjectMeta.Name,
+			"name":        composition.ObjectMeta.Name,
+			"annotations": composition.ObjectMeta.Annotations,
 		},
 		"spec": composition.Spec,
 	}
@@ -178,7 +222,7 @@ func (c *generateCmd) Run(ctx context.Context, p pterm.TextPrinter) error { // n
 	// Convert Composition to YAML format
 	compositionYAML, err := yaml.Marshal(compositionClean)
 	if err != nil {
-		return errors.Wrapf(err, "failed to marshal composition to yaml")
+		return errors.Wrap(err, "failed to marshal composition to yaml")
 	}
 
 	switch c.Output {
@@ -186,21 +230,41 @@ func (c *generateCmd) Run(ctx context.Context, p pterm.TextPrinter) error { // n
 		// Determine the file path
 		filePath := c.Path
 		if filePath == "" {
-			filePath = fmt.Sprintf("apis/%s/composition.yaml", xrd.Spec.Names.Plural)
+			if c.Name != "" {
+				filePath = fmt.Sprintf("%s/composition-%s.yaml", strings.ToLower(plural), c.Name)
+			} else {
+				filePath = fmt.Sprintf("%s/composition.yaml", strings.ToLower(plural))
+			}
 		}
 
-		// Ensure the directory exists before writing the file
-		outputDir := filepath.Dir(filepath.Clean(filePath))
-		if err = os.MkdirAll(outputDir, 0750); err != nil {
-			return errors.Wrapf(err, "failed to create output directory")
+		// Check if the composition already exists
+		exists, err := afero.Exists(c.apisFS, filePath)
+		if err != nil {
+			return errors.Wrap(err, "failed to check if file exists")
+		}
+
+		// If the file exists, prompt the user for confirmation to overwrite
+		if exists {
+
+			pterm.Println() // Blank line for spacing
+			confirm := pterm.DefaultInteractiveConfirm
+			confirm.DefaultText = fmt.Sprintf("The Composition file '%s' already exists. Do you want to overwrite its contents?", afero.FullBaseFsPath(c.apisFS.(*afero.BasePathFs), filePath))
+			confirm.DefaultValue = false
+
+			result, _ := confirm.Show() // Display confirmation prompt
+			pterm.Println()             // Blank line for spacing
+
+			if !result {
+				return errors.New("operation cancelled by user")
+			}
 		}
 
 		// Write the YAML to the specified output file
-		if err = os.WriteFile(filePath, compositionYAML, 0644); err != nil { //nolint:gosec // writing to file
-			return errors.Wrapf(err, "failed to write composition to file")
+		if err := afero.WriteFile(c.apisFS, filePath, compositionYAML, 0644); err != nil {
+			return errors.Wrap(err, "failed to write composition to file")
 		}
 
-		p.Printfln("successfully created Composition and saved to %s", filePath)
+		p.Printfln("successfully created Composition and saved to %s", afero.FullBaseFsPath(c.apisFS.(*afero.BasePathFs), filePath))
 
 	case outputYAML:
 		p.Println(string(compositionYAML))
@@ -208,7 +272,7 @@ func (c *generateCmd) Run(ctx context.Context, p pterm.TextPrinter) error { // n
 	case outputJSON:
 		jsonData, err := yaml.YAMLToJSON(compositionYAML)
 		if err != nil {
-			return errors.Wrapf(err, "failed to convert composition to JSON")
+			return errors.Wrap(err, "failed to convert composition to JSON")
 		}
 		p.Println(string(jsonData))
 
@@ -220,18 +284,23 @@ func (c *generateCmd) Run(ctx context.Context, p pterm.TextPrinter) error { // n
 }
 
 // newComposition to create a new Composition
-func (c *generateCmd) newComposition(ctx context.Context, xrd v1.CompositeResourceDefinition, project projectv1alpha1.Project) (*v1.Composition, error) { // nolint:gocyclo
-	group := xrd.Spec.Group
-	version, err := xcrd.GetXRDVersion(xrd)
+func (c *generateCmd) newComposition(ctx context.Context) (*v1.Composition, string, error) { // nolint:gocyclo
+	group, version, kind, plural, matchLabels, err := c.processResource()
 	if err != nil {
-		return nil, errors.Wrapf(err, "version not found")
+		return nil, "", errors.Wrap(err, "failed to load resource")
 	}
-	kind := xrd.Spec.Names.Kind
-	name := xrd.Name
 
-	pipelineSteps, err := c.createPipelineFromProject(ctx, project)
+	// Use custom name if provided, otherwise generate it
+	name := c.Name
+	if name == "" {
+		name = strings.ToLower(fmt.Sprintf("%s.%s", plural, group))
+	} else {
+		name = strings.ToLower(fmt.Sprintf("%s.%s.%s", c.Name, plural, group))
+	}
+
+	pipelineSteps, err := c.createPipelineFromProject(ctx)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed create pipelines from project")
+		return nil, "", errors.Wrap(err, "failed create pipelines from project")
 	}
 
 	composition := &v1.Composition{
@@ -240,7 +309,8 @@ func (c *generateCmd) newComposition(ctx context.Context, xrd v1.CompositeResour
 			Kind:       v1.CompositionGroupVersionKind.Kind,
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name: name,
+			Name:        name,
+			Annotations: matchLabels,
 		},
 		Spec: v1.CompositionSpec{
 			CompositeTypeRef: v1.TypeReference{
@@ -251,18 +321,18 @@ func (c *generateCmd) newComposition(ctx context.Context, xrd v1.CompositeResour
 			Pipeline: pipelineSteps,
 		},
 	}
-	return composition, nil
+	return composition, plural, nil
 }
 
-func (c *generateCmd) createPipelineFromProject(ctx context.Context, project projectv1alpha1.Project) ([]v1.PipelineStep, error) { // nolint:gocyclo
-	maxSteps := len(project.Spec.DependsOn)
+func (c *generateCmd) createPipelineFromProject(ctx context.Context) ([]v1.PipelineStep, error) { // nolint:gocyclo
+	maxSteps := len(c.proj.Spec.DependsOn)
 	pipelineSteps := make([]v1.PipelineStep, 0, maxSteps)
 	foundAutoReadyFunction := false
 
 	var deps []*mxpkg.ParsedPackage
 	var err error
 
-	for _, dep := range project.Spec.DependsOn {
+	for _, dep := range c.proj.Spec.DependsOn {
 		if dep.Function != nil {
 			functionName, err := name.ParseReference(*dep.Function)
 			if err != nil {
@@ -298,7 +368,7 @@ func (c *generateCmd) createPipelineFromProject(ctx context.Context, project pro
 		var ud v1beta1.Dependency
 		ud, deps, err = c.m.AddAll(ctx, d)
 		if err != nil {
-			return nil, errors.Wrapf(err, "failed to add auto-ready dependency")
+			return nil, errors.Wrap(err, "failed to add auto-ready dependency")
 		}
 
 		meta := c.ws.View().Meta()
@@ -307,11 +377,11 @@ func (c *generateCmd) createPipelineFromProject(ctx context.Context, project pro
 				ud.Constraints = d.Constraints
 			}
 			if err := meta.Upsert(ud); err != nil {
-				return nil, errors.Wrapf(err, "failed to add auto-ready dependency")
+				return nil, errors.Wrap(err, "failed to add auto-ready dependency")
 			}
 
 			if err := c.ws.Write(meta); err != nil {
-				return nil, errors.Wrapf(err, "failed to write auto-ready dependency to project")
+				return nil, errors.Wrap(err, "failed to write auto-ready dependency to project")
 			}
 		}
 
@@ -325,10 +395,10 @@ func (c *generateCmd) createPipelineFromProject(ctx context.Context, project pro
 				if crd, ok := dep.Objs[0].(*apiextensionsv1.CustomResourceDefinition); ok {
 					rawExtension, err = c.setRawExtension(*crd)
 					if err != nil {
-						return nil, errors.Wrapf(err, "failed to generate rawExtension for input")
+						return nil, errors.Wrap(err, "failed to generate rawExtension for input")
 					}
 				} else {
-					return nil, errors.Errorf("failed to use to CustomResourceDefinition")
+					return nil, errors.New("failed to use to CustomResourceDefinition")
 				}
 			}
 		}
@@ -408,11 +478,11 @@ func (c *generateCmd) setRawExtension(crd apiextensionsv1.CustomResourceDefiniti
 		// only required fields from function crd
 		yamlData, err := xcrd.GenerateExample(crd, true, false)
 		if err != nil {
-			return nil, errors.Wrapf(err, "failed generating schema")
+			return nil, errors.Wrap(err, "failed generating schema")
 		}
 		jsonData, err := json.Marshal(yamlData)
 		if err != nil {
-			return nil, errors.Wrapf(err, "failed marshaling to JSON")
+			return nil, errors.Wrap(err, "failed marshaling to JSON")
 		}
 		rawExtensionContent = string(jsonData)
 	}
@@ -422,4 +492,58 @@ func (c *generateCmd) setRawExtension(crd apiextensionsv1.CustomResourceDefiniti
 	}
 
 	return raw, nil
+}
+
+func (c *generateCmd) processResource() (string, string, string, string, map[string]string, error) {
+	resourceRaw, err := afero.ReadFile(c.projFS, c.Resource)
+	if err != nil {
+		return "", "", "", "", nil, errors.Wrap(err, "failed to read resource file")
+	}
+
+	// Create an unstructured object
+	var unstructuredObj unstructured.Unstructured
+	if err := yaml.Unmarshal(resourceRaw, &unstructuredObj.Object); err != nil {
+		return "", "", "", "", nil, errors.Wrap(err, "failed to unmarshal resource into unstructured object")
+	}
+
+	// Check if obj is a CompositeResourceDefinition by examining its "kind"
+	if unstructuredObj.GetKind() == "CompositeResourceDefinition" {
+
+		// Convert unstructured to CompositeResourceDefinition
+		var xrd v1.CompositeResourceDefinition
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(unstructuredObj.Object, &xrd); err != nil {
+			return "", "", "", "", nil, errors.Wrap(err, "failed to convert unstructured object to CompositeResourceDefinition")
+		}
+
+		// Successfully identified as CompositeResourceDefinition, extract fields
+		group := xrd.Spec.Group
+		version, err := xcrd.GetXRDVersion(xrd)
+		if err != nil {
+			return "", "", "", "", nil, errors.Wrap(err, "failed to retrieve XRD version")
+		}
+		kind := xrd.Spec.Names.Kind
+		plural := xrd.Spec.Names.Plural
+
+		return group, version, kind, plural, nil, nil
+	}
+
+	// Fallback: If not a CompositeResourceDefinition, process generically
+	gvk := unstructuredObj.GroupVersionKind()
+	plural := c.Plural
+	if plural == "" {
+		plural = flect.Pluralize(gvk.Kind)
+	}
+
+	// Attempt to extract matchLabels from spec.compositionSelector.matchLabels
+	matchLabels := map[string]string{}
+	labels, found, err := unstructured.NestedStringMap(unstructuredObj.Object, "spec", "compositionSelector", "matchLabels")
+	if err != nil {
+		return "", "", "", "", nil, errors.Wrap(err, "failed to extract matchLabels from resource spec")
+	}
+	if found {
+		matchLabels = labels
+	}
+
+	// Return the gathered information along with any matchLabels
+	return gvk.Group, gvk.Version, gvk.Kind, plural, matchLabels, nil
 }

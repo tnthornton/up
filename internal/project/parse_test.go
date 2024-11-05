@@ -43,7 +43,7 @@ metadata:
 spec:
   repository: xpkg.upbound.io/upbound/getting-started
   paths:
-    apis: "apis"
+    apis: "test"
     examples: "example"
     functions: "funcs"
 `
@@ -52,7 +52,7 @@ spec:
 			projectFile: "/project.yaml",
 			expectErr:   false,
 			expectedPaths: &v1alpha1.ProjectPaths{
-				APIs:      "/apis",
+				APIs:      "/test",
 				Examples:  "/example",
 				Functions: "/funcs",
 			},
@@ -75,7 +75,7 @@ spec:
 			projectFile: "/project.yaml",
 			expectErr:   false,
 			expectedPaths: &v1alpha1.ProjectPaths{
-				APIs:      "/",
+				APIs:      "/apis",
 				Examples:  "/examples",
 				Functions: "/funcs",
 			},
@@ -105,7 +105,7 @@ spec:
 			projectFile: "/project.yaml",
 			expectErr:   false,
 			expectedPaths: &v1alpha1.ProjectPaths{
-				APIs:      "/",
+				APIs:      "/apis",
 				Examples:  "/examples",
 				Functions: "/functions",
 			},

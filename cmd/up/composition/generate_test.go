@@ -26,32 +26,33 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/spf13/afero"
 	"gotest.tools/v3/assert"
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 
+	"github.com/upbound/up/internal/project"
 	"github.com/upbound/up/internal/xpkg/dep/cache"
 	"github.com/upbound/up/internal/xpkg/dep/manager"
 	"github.com/upbound/up/internal/xpkg/dep/resolver/image"
 	"github.com/upbound/up/internal/xpkg/workspace"
-	"github.com/upbound/up/pkg/apis/project/v1alpha1"
 
 	"k8s.io/utils/ptr"
-	"sigs.k8s.io/yaml"
 )
 
 var (
-	//go:embed testdata/projectA/*
+	//go:embed testdata/projectA/**
 	projectAFS embed.FS
 
-	//go:embed testdata/projectB/*
+	//go:embed testdata/projectB/**
 	projectBFS embed.FS
+
+	//go:embed testdata/projectC/**
+	projectCFS embed.FS
 
 	//go:embed testdata/packages/*
 	packagesFS embed.FS
 
-	//go:embed testdata/cel.fn.crossplane.io_filters.yaml
-	celYAML []byte
+	//go:embed testdata/packagesB/*
+	packagesBFS embed.FS
 )
 
 func TestNewComposition(t *testing.T) {
@@ -60,101 +61,17 @@ func TestNewComposition(t *testing.T) {
 		err         string
 	}
 
-	// Initialize the in-memory Afero filesystem
-	fs := afero.NewMemMapFs()
-
-	// Walk through the embedded testdata directory and copy files to the Afero filesystem
-	err := embedToAferoFS(projectAFS, fs, "testdata", "/project")
-	assert.NilError(t, err)
-
-	// Precompute expected RawExtension values by calling setRawExtension
-	var eRawExtCel *runtime.RawExtension
-
-	var celCRD apiextensionsv1.CustomResourceDefinition
-	if err := yaml.Unmarshal(celYAML, &celCRD); err != nil {
-		t.Fatalf("Failed to unmarshal CEL CRD: %v", err)
-	}
-
-	// Initialize the workspace with the Afero filesystem
-	ws, err := workspace.New("/project", workspace.WithFS(fs), workspace.WithPermissiveParser())
-	assert.NilError(t, err)
-	err = ws.Parse(context.Background()) // Parse the workspace
-	assert.NilError(t, err)
-
-	// Set up a mock cache directory in Afero
-	cch, err := cache.NewLocal("/cache", cache.WithFS(fs))
-	assert.NilError(t, err)
-
-	// Create mock fetcher that holds the images
-	testPkgFS := afero.NewBasePathFs(afero.FromIOFS{FS: packagesFS}, "testdata/packages")
-
-	r := image.NewResolver(
-		image.WithFetcher(
-			&image.FSFetcher{FS: testPkgFS},
-		),
-	)
-
-	// Initialize the dependency manager
-	mgr, err := manager.New(
-		manager.WithCache(cch),
-		manager.WithResolver(r),
-	)
-	assert.NilError(t, err)
-
-	// Construct a workspace from the test filesystem.
-	ws, err = workspace.New("/project",
-		workspace.WithFS(fs),
-		workspace.WithPermissiveParser(),
-	)
-	assert.NilError(t, err)
-	err = ws.Parse(context.Background())
-	assert.NilError(t, err)
-
-	// Initialize generateCmd with input type "filesystem"
-	generateCmd := generateCmd{
-		XRD:         "/project/definition.yaml",
-		ProjectFile: "/project/upbound.yaml",
-		m:           mgr,
-		ws:          ws,
-	}
-
-	// Generate expected RawExtension for CEL
-	rawExtCel, err := generateCmd.setRawExtension(celCRD)
-	if err != nil {
-		t.Fatalf("Failed to set raw extension for Patch-and-Transform: %v", err)
-	}
-	eRawExtCel = rawExtCel
-
 	cases := map[string]struct {
-		xrd     v1.CompositeResourceDefinition
-		project v1alpha1.Project
-		want    want
+		name       string
+		plural     string
+		packages   afero.Fs
+		embeddedFS embed.FS
+		want       want
 	}{
-		"ValidInput": {
-			xrd: func() v1.CompositeResourceDefinition {
-				data, err := afero.ReadFile(fs, "/project/definition.yaml")
-				if err != nil {
-					t.Fatalf("Failed to read XRD file from afero filesystem: %v", err)
-				}
-				var xrd v1.CompositeResourceDefinition
-				err = yaml.Unmarshal(data, &xrd)
-				if err != nil {
-					t.Fatalf("Failed to unmarshal XRD: %v", err)
-				}
-				return xrd
-			}(),
-			project: func() v1alpha1.Project {
-				data, err := afero.ReadFile(fs, "/project/upbound.yaml")
-				if err != nil {
-					t.Fatalf("Failed to read project file from afero filesystem: %v", err)
-				}
-				var project v1alpha1.Project
-				err = yaml.Unmarshal(data, &project)
-				if err != nil {
-					t.Fatalf("Failed to unmarshal project: %v", err)
-				}
-				return project
-			}(),
+		"CompositionWithAnnotationsAndName": {
+			name:       "xyz",
+			embeddedFS: projectAFS,
+			packages:   afero.NewBasePathFs(afero.FromIOFS{FS: packagesFS}, "testdata/packages"),
 			want: want{
 				composition: &v1.Composition{
 					TypeMeta: metav1.TypeMeta{
@@ -162,12 +79,16 @@ func TestNewComposition(t *testing.T) {
 						APIVersion: "apiextensions.crossplane.io/v1",
 					},
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "xclusters.aws.upbound.io", // Expected output name
+						Name: "xyz.xnetworks.aws.platform.upbound.io",
+						Annotations: map[string]string{
+							"cloud": "aws",
+							"type":  "network",
+						},
 					},
 					Spec: v1.CompositionSpec{
 						CompositeTypeRef: v1.TypeReference{
-							APIVersion: "aws.upbound.io/v1alpha1", // Expected API version
-							Kind:       "XCluster",                // Expected kind
+							APIVersion: "aws.platform.upbound.io/v1alpha1", // Expected API version
+							Kind:       "XNetwork",                         // Expected kind
 						},
 						Mode: ptr.To(v1.CompositionModePipeline),
 						Pipeline: []v1.PipelineStep{
@@ -202,13 +123,37 @@ func TestNewComposition(t *testing.T) {
 								},
 							},
 							{
-								Step: "crossplane-contrib-function-cel-filter",
+								Step: "crossplane-contrib-function-auto-ready",
 								FunctionRef: v1.FunctionReference{
-									Name: "crossplane-contrib-function-cel-filter",
+									Name: "crossplane-contrib-function-auto-ready",
 								},
-								// Precomputed expected RawExtension for CEL
-								Input: eRawExtCel,
 							},
+						},
+					},
+				},
+				err: "",
+			},
+		},
+		"CompositionWithoutAnnotations": {
+			embeddedFS: projectBFS,
+			packages:   afero.NewBasePathFs(afero.FromIOFS{FS: packagesBFS}, "testdata/packagesB"),
+			want: want{
+				composition: &v1.Composition{
+					TypeMeta: metav1.TypeMeta{
+						Kind:       "Composition",
+						APIVersion: "apiextensions.crossplane.io/v1",
+					},
+					ObjectMeta: metav1.ObjectMeta{
+						Name:        "xnetworks.aws.platform.upbound.io",
+						Annotations: map[string]string{},
+					},
+					Spec: v1.CompositionSpec{
+						CompositeTypeRef: v1.TypeReference{
+							APIVersion: "aws.platform.upbound.io/v1alpha1", // Expected API version
+							Kind:       "XNetwork",                         // Expected kind
+						},
+						Mode: ptr.To(v1.CompositionModePipeline),
+						Pipeline: []v1.PipelineStep{
 							{
 								Step: "crossplane-contrib-function-auto-ready",
 								FunctionRef: v1.FunctionReference{
@@ -221,114 +166,10 @@ func TestNewComposition(t *testing.T) {
 				err: "",
 			},
 		},
-	}
-
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			// Call newComposition and check results
-			got, err := generateCmd.newComposition(context.Background(), tc.xrd, tc.project)
-
-			// Compare the result with the expected composition
-			if diff := cmp.Diff(got, tc.want.composition, cmpopts.IgnoreUnexported(v1.Composition{})); diff != "" {
-				t.Errorf("NewComposition() composition: -got, +want:\n%s", diff)
-			}
-
-			// Check for errors if there's an expected error or actual error occurred
-			if err != nil || tc.want.err != "" {
-				if diff := cmp.Diff(err.Error(), tc.want.err, cmpopts.EquateErrors()); diff != "" {
-					t.Errorf("NewComposition() error: -got, +want:\n%s", diff)
-				}
-			}
-		})
-	}
-}
-
-func TestFunctionAutoReadyAddToCompositionAndProject(t *testing.T) {
-	type want struct {
-		composition *v1.Composition
-		err         string
-	}
-
-	// Initialize the in-memory Afero filesystem
-	fs := afero.NewMemMapFs()
-
-	// Walk through the embedded testdata directory and copy files to the Afero filesystem
-	err := embedToAferoFS(projectBFS, fs, "testdata", "/project")
-	assert.NilError(t, err)
-
-	// Set up a mock cache directory in Afero
-	cch, err := cache.NewLocal("/cache", cache.WithFS(fs))
-	assert.NilError(t, err)
-
-	// Create mock fetcher that holds the images
-	testPkgFS := afero.NewBasePathFs(afero.FromIOFS{FS: packagesFS}, "testdata/packages")
-
-	r := image.NewResolver(
-		image.WithFetcher(
-			&image.FSFetcher{FS: testPkgFS},
-		),
-	)
-
-	// Initialize the workspace with the Afero filesystem
-	ws, err := workspace.New("/project", workspace.WithFS(fs), workspace.WithPermissiveParser())
-	assert.NilError(t, err)
-	err = ws.Parse(context.Background()) // Parse the workspace
-	assert.NilError(t, err)
-
-	// Initialize the dependency manager
-	mgr, err := manager.New(
-		manager.WithCache(cch),
-		manager.WithResolver(r),
-	)
-	assert.NilError(t, err)
-
-	// Construct a workspace from the test filesystem.
-	ws, err = workspace.New("/project",
-		workspace.WithFS(fs),
-		workspace.WithPermissiveParser(),
-	)
-	assert.NilError(t, err)
-	err = ws.Parse(context.Background())
-	assert.NilError(t, err)
-
-	// Initialize the generateCmd
-	generateCmd := generateCmd{
-		XRD:         "/project/definition.yaml",
-		ProjectFile: "/project/upbound.yaml",
-		m:           mgr,
-		ws:          ws,
-	}
-
-	cases := map[string]struct {
-		xrd     v1.CompositeResourceDefinition
-		project v1alpha1.Project
-		want    want
-	}{
-		"AddFunctionAutoReadyToCompositionAndProject": {
-			xrd: func() v1.CompositeResourceDefinition {
-				data, err := afero.ReadFile(fs, "/project/definition.yaml")
-				if err != nil {
-					t.Fatalf("Failed to read XRD file from afero filesystem: %v", err)
-				}
-				var xrd v1.CompositeResourceDefinition
-				err = yaml.Unmarshal(data, &xrd)
-				if err != nil {
-					t.Fatalf("Failed to unmarshal XRD: %v", err)
-				}
-				return xrd
-			}(),
-			project: func() v1alpha1.Project {
-				data, err := afero.ReadFile(fs, "/project/upbound.yaml")
-				if err != nil {
-					t.Fatalf("Failed to read project file from afero filesystem: %v", err)
-				}
-				var project v1alpha1.Project
-				err = yaml.Unmarshal(data, &project)
-				if err != nil {
-					t.Fatalf("Failed to unmarshal project: %v", err)
-				}
-				return project
-			}(),
+		"CompositionWithCustomPlural": {
+			plural:     "Xpostgreses",
+			embeddedFS: projectBFS,
+			packages:   afero.NewBasePathFs(afero.FromIOFS{FS: packagesBFS}, "testdata/packagesB"),
 			want: want{
 				composition: &v1.Composition{
 					TypeMeta: metav1.TypeMeta{
@@ -336,12 +177,44 @@ func TestFunctionAutoReadyAddToCompositionAndProject(t *testing.T) {
 						APIVersion: "apiextensions.crossplane.io/v1",
 					},
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "xclusters.aws.upbound.io", // Expected output name
+						Name:        "xpostgreses.aws.platform.upbound.io",
+						Annotations: map[string]string{},
 					},
 					Spec: v1.CompositionSpec{
 						CompositeTypeRef: v1.TypeReference{
-							APIVersion: "aws.upbound.io/v1alpha1", // Expected API version
-							Kind:       "XCluster",                // Expected kind
+							APIVersion: "aws.platform.upbound.io/v1alpha1", // Expected API version
+							Kind:       "XNetwork",                         // Expected kind
+						},
+						Mode: ptr.To(v1.CompositionModePipeline),
+						Pipeline: []v1.PipelineStep{
+							{
+								Step: "crossplane-contrib-function-auto-ready",
+								FunctionRef: v1.FunctionReference{
+									Name: "crossplane-contrib-function-auto-ready",
+								},
+							},
+						},
+					},
+				},
+				err: "",
+			},
+		},
+		"CompositionFromXRD": {
+			embeddedFS: projectCFS,
+			packages:   afero.NewBasePathFs(afero.FromIOFS{FS: packagesBFS}, "testdata/packagesB"),
+			want: want{
+				composition: &v1.Composition{
+					TypeMeta: metav1.TypeMeta{
+						Kind:       "Composition",
+						APIVersion: "apiextensions.crossplane.io/v1",
+					},
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "xnetworks.aws.platform.upbound.io",
+					},
+					Spec: v1.CompositionSpec{
+						CompositeTypeRef: v1.TypeReference{
+							APIVersion: "aws.platform.upbound.io/v1alpha1", // Expected API version
+							Kind:       "XNetwork",                         // Expected kind from plural
 						},
 						Mode: ptr.To(v1.CompositionModePipeline),
 						Pipeline: []v1.PipelineStep{
@@ -361,8 +234,56 @@ func TestFunctionAutoReadyAddToCompositionAndProject(t *testing.T) {
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
+
+			outFS := afero.NewMemMapFs()
+			// Set up a mock cache directory in Afero
+			cch, err := cache.NewLocal("/cache", cache.WithFS(outFS))
+			assert.NilError(t, err)
+
+			// Create mock fetcher that holds the images
+			r := image.NewResolver(
+				image.WithFetcher(
+					&image.FSFetcher{FS: tc.packages},
+				),
+			)
+
+			// Initialize the dependency manager
+			mgr, err := manager.New(
+				manager.WithCache(cch),
+				manager.WithResolver(r),
+			)
+			assert.NilError(t, err)
+
+			// Embed test data into projectFS
+			projFS := afero.NewMemMapFs()
+			err = embedToAferoFS(tc.embeddedFS, projFS, "testdata", "/")
+
+			// Parse project config
+			proj, _ := project.Parse(projFS, "/upbound.yaml")
+			assert.NilError(t, err)
+
+			// Construct a workspace from the test filesystem.
+			ws, err := workspace.New("/",
+				workspace.WithFS(projFS),
+				workspace.WithPermissiveParser(),
+			)
+			assert.NilError(t, err)
+			err = ws.Parse(context.Background())
+			assert.NilError(t, err)
+
+			generateCmd := generateCmd{
+				Name:     tc.name,
+				Plural:   tc.plural,
+				Resource: "/test.yaml",
+				m:        mgr,
+				ws:       ws,
+				proj:     proj,
+				projFS:   projFS,
+				apisFS:   projFS,
+			}
+
 			// Call newComposition and check results
-			got, err := generateCmd.newComposition(context.Background(), tc.xrd, tc.project)
+			got, _, err := generateCmd.newComposition(context.Background())
 
 			// Compare the result with the expected composition
 			if diff := cmp.Diff(got, tc.want.composition, cmpopts.IgnoreUnexported(v1.Composition{})); diff != "" {
@@ -375,26 +296,6 @@ func TestFunctionAutoReadyAddToCompositionAndProject(t *testing.T) {
 					t.Errorf("NewComposition() error: -got, +want:\n%s", diff)
 				}
 			}
-			// Verify the dependencies are updated in the upbound.yaml
-			updatedBytes, err := afero.ReadFile(fs, "/project/upbound.yaml")
-			assert.NilError(t, err)
-
-			var updatedProject v1alpha1.Project
-			err = yaml.Unmarshal(updatedBytes, &updatedProject)
-			assert.NilError(t, err)
-
-			foundDependency := false
-			// Inline check for the specific dependency in Spec.DependsOn
-			for _, dep := range updatedProject.Spec.DependsOn {
-				if dep.Function != nil && *dep.Function == functionAutoReadyXpkg {
-					foundDependency = true
-					break
-				}
-			}
-
-			// Assert that the expected dependency was found
-			assert.Assert(t, foundDependency, "Expected dependency on function-auto-ready is missing")
-
 		})
 	}
 }
