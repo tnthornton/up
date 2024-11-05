@@ -23,15 +23,15 @@ import (
 	"strings"
 
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
+	v1 "github.com/crossplane/crossplane/apis/apiextensions/v1"
 	"github.com/gobuffalo/flect"
 	"github.com/pterm/pterm"
-	"sigs.k8s.io/yaml"
-
-	v1 "github.com/crossplane/crossplane/apis/apiextensions/v1"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+
+	"github.com/upbound/up/internal/yaml"
 )
 
 const (
@@ -66,19 +66,8 @@ func (c *generateCmd) Run(ctx context.Context, p pterm.TextPrinter) error { // n
 		return errors.Wrapf(err, "Failed to create CompositeResourceDefinition")
 	}
 
-	// get rid of metadata.creationTimestamp nil
-	// get rid of status
-	xrdClean := map[string]interface{}{
-		"apiVersion": xrd.APIVersion,
-		"kind":       xrd.Kind,
-		"metadata": map[string]interface{}{
-			"name": xrd.ObjectMeta.Name,
-		},
-		"spec": xrd.Spec,
-	}
-
 	// Convert XRD to YAML format
-	xrdYAML, err := yaml.Marshal(xrdClean)
+	xrdYAML, err := yaml.Marshal(xrd)
 	if err != nil {
 		return errors.Wrapf(err, "failed to marshal XRD to YAML")
 	}

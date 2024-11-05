@@ -30,7 +30,6 @@ import (
 	"github.com/pterm/pterm"
 	"github.com/spf13/afero"
 	"k8s.io/apimachinery/pkg/util/validation"
-	"sigs.k8s.io/yaml"
 
 	"github.com/upbound/up/internal/filesystem"
 	"github.com/upbound/up/internal/project"
@@ -40,6 +39,7 @@ import (
 	"github.com/upbound/up/internal/xpkg/dep/manager"
 	"github.com/upbound/up/internal/xpkg/dep/resolver/image"
 	"github.com/upbound/up/internal/xpkg/workspace"
+	"github.com/upbound/up/internal/yaml"
 )
 
 func (c *generateCmd) Help() string {

@@ -22,17 +22,15 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/pterm/pterm"
-	"sigs.k8s.io/yaml"
-
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
-
 	v1 "github.com/crossplane/crossplane/apis/apiextensions/v1"
 	"github.com/crossplane/crossplane/xcrd"
+	"github.com/pterm/pterm"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	icrd "github.com/upbound/up/internal/crd"
+	"github.com/upbound/up/internal/yaml"
 )
 
 const (
@@ -366,22 +364,8 @@ func (c *generateCmd) createResource(resourceType, compositeName, apiGroup, apiV
 
 // outputResource handles the output of the generated resource based on the specified output type
 func (c *generateCmd) outputResource(res resource) error {
-	// Clean up resource to remove unnecessary fields
-	resourceClean := map[string]interface{}{
-		"apiVersion": res.APIVersion,
-		"kind":       res.Kind,
-		"metadata": map[string]interface{}{
-			"name": res.ObjectMeta.Name,
-		},
-		"spec": res.Spec,
-	}
-
-	if len(res.ObjectMeta.Namespace) > 0 {
-		resourceClean["metadata"].(map[string]interface{})["namespace"] = res.ObjectMeta.Namespace
-	}
-
 	// Convert resource to YAML format
-	resourceYAML, err := yaml.Marshal(resourceClean)
+	resourceYAML, err := yaml.Marshal(res)
 	if err != nil {
 		return errors.Wrapf(err, "failed to marshal resource to YAML")
 	}

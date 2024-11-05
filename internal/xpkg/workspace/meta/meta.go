@@ -15,12 +15,9 @@
 package meta
 
 import (
-	"encoding/json"
 	"errors"
 
-	apimetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	sigsyaml "sigs.k8s.io/yaml"
 
 	pkgmetav1 "github.com/crossplane/crossplane/apis/pkg/meta/v1"
 	pkgmetav1alpha1 "github.com/crossplane/crossplane/apis/pkg/meta/v1alpha1"
@@ -29,6 +26,7 @@ import (
 
 	"github.com/upbound/up/internal/xpkg/dep/manager"
 	"github.com/upbound/up/internal/xpkg/scheme"
+	"github.com/upbound/up/internal/yaml"
 	projectv1alpha1 "github.com/upbound/up/pkg/apis/project/v1alpha1"
 )
 
@@ -86,28 +84,7 @@ func (m *Meta) Upsert(d v1beta1.Dependency) error {
 
 // Bytes returns the cleaned up byte representation of the meta file obj.
 func (m *Meta) Bytes() ([]byte, error) {
-	data, err := sigsyaml.Marshal(m.obj)
-	if err != nil {
-		return nil, err
-	}
-
-	// (@tnthornton) workaround for `creationTimestamp: null` in marshaled result.
-	// see https://github.com/kubernetes/kubernetes/pull/104857 for inspiration
-
-	t := apimetav1.Time{}
-	if tobj, ok := m.obj.(interface{ GetCreationTimestamp() apimetav1.Time }); ok {
-		t = tobj.GetCreationTimestamp()
-	}
-
-	if t.Equal(&apimetav1.Time{}) {
-		// the timestamp is empty, we need to clean it from the resulting
-		// file data
-		data, err = cleanNullTs(m.obj)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return data, nil
+	return yaml.Marshal(m.obj)
 }
 
 // Object returns the raw meta object.
@@ -192,25 +169,6 @@ func upsertDeps(d v1beta1.Dependency, o runtime.Object) error { // nolint:gocycl
 	}
 
 	return nil
-}
-
-// cleanNullTs is a helper function for cleaning the erroneous
-// `creationTimestamp: null` from the marshaled data that we're
-// going to writer to the meta file.
-func cleanNullTs(p runtime.Object) ([]byte, error) {
-	ob, err := json.Marshal(p)
-	if err != nil {
-		return nil, err
-	}
-	var m map[string]any
-	err = json.Unmarshal(ob, &m)
-	if err != nil {
-		return nil, err
-	}
-	// remove the erroneous creationTimestamp: null entry
-	delete(m["metadata"].(map[string]any), "creationTimestamp")
-
-	return sigsyaml.Marshal(m)
 }
 
 func convertToV1alpha1(deps []pkgmetav1.Dependency) []pkgmetav1alpha1.Dependency {
