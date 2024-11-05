@@ -192,17 +192,15 @@ func (b *realBuilder) Build(ctx context.Context, project *v1alpha1.Project, proj
 		return err
 	})
 
-	// Generate KCL Schemas
 	var (
 		mut   []xpkg.Mutator
 		mutMu sync.Mutex
 	)
+	statusStage = "Generating language schemas"
+	// Generate KCL Schemas
 	eg.Go(func() error {
-		statusStage := "Generating KCL schemas"
-		os.eventChan.SendEvent(statusStage, async.EventStatusStarted)
 		kfs, err := schemagenerator.GenerateSchemaKcl(ctx, apisSource, apiExcludes, b.schemaRunner)
 		if err != nil {
-			os.eventChan.SendEvent(statusStage, async.EventStatusFailure)
 			return err
 		}
 
@@ -217,18 +215,13 @@ func (b *realBuilder) Build(ctx context.Context, project *v1alpha1.Project, proj
 				}
 			}
 		}
-
-		os.eventChan.SendEvent(statusStage, async.EventStatusSuccess)
 		return nil
 	})
 
 	// Generate Python Schemas
 	eg.Go(func() error {
-		statusStage := "Generating Python schemas"
-		os.eventChan.SendEvent(statusStage, async.EventStatusStarted)
 		pfs, err := schemagenerator.GenerateSchemaPython(ctx, apisSource, apiExcludes, b.schemaRunner)
 		if err != nil {
-			os.eventChan.SendEvent(statusStage, async.EventStatusFailure)
 			return err
 		}
 
@@ -242,15 +235,15 @@ func (b *realBuilder) Build(ctx context.Context, project *v1alpha1.Project, proj
 				}
 			}
 		}
-
-		os.eventChan.SendEvent(statusStage, async.EventStatusSuccess)
 		return nil
 	})
 
 	err := eg.Wait()
 	if err != nil {
+		os.eventChan.SendEvent(statusStage, async.EventStatusFailure)
 		return nil, err
 	}
+	os.eventChan.SendEvent(statusStage, async.EventStatusSuccess)
 
 	// Find and build embedded functions. This has to come after schema
 	// generation because functions may depend on the generated schemas.
