@@ -61,7 +61,7 @@ case $OS in
     ;;
 esac
 
-url="https://private-cli.upbound.io/${CHANNEL}/${VERSION}/bin/${OS_ARCH}/${BIN}"
+url="https://cli.upbound.io/${CHANNEL}/${VERSION}/bin/${OS_ARCH}/${BIN}"
 if ! curl -sLO ${url}; then
   echo "Failed to download Up. Please make sure version ${VERSION} exists on channel ${CHANNEL}."
   exit 1
