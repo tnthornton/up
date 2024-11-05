@@ -64,3 +64,9 @@ func ToSpacesK8sURL(ingress string, ctp types.NamespacedName) string {
 	// pointed at a control plane
 	return fmt.Sprintf("https://%s/apis/spaces.upbound.io/v1beta1/namespaces/%s/controlplanes/%s/k8s", ingress, ctp.Namespace, ctp.Name)
 }
+
+// ParseLocalHostURL checks if the host is a localhost URL (127.0.0.1) with a five-digit port.
+func ParseLocalHostURL(host string) (matches bool) {
+	localhostRE := regexp.MustCompile(`^https://127\.0\.0\.1:\d{5}$`)
+	return localhostRE.MatchString(host)
+}

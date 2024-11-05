@@ -45,11 +45,6 @@ type importCmd struct {
 
 func (c *importCmd) Help() string {
 	return `
-Usage:
-    migration import [options]
-
-The 'import' command imports a control plane state from an archive file into an Upbound managed control plane.
-
 By default, all managed resources will be paused during the import process for possible manual inspection/validation.
 You can use the --unpause-after-import flag to automatically unpause all managed resources after the import process completes.
 
@@ -71,8 +66,8 @@ func (c *importCmd) BeforeApply() error {
 func (c *importCmd) Run(ctx context.Context, migCtx *migration.Context) error { //nolint:gocyclo // Just a lot of error handling.
 	cfg := migCtx.Kubeconfig
 
-	if !isMCP(cfg.Host) {
-		return errors.New("not a managed control plane, import not supported!")
+	if !isAllowedImportTarget(cfg.Host) {
+		return errors.New("not a local or managed control plane, import not supported!")
 	}
 
 	dynamicClient, err := dynamic.NewForConfig(cfg)
@@ -130,11 +125,13 @@ func (c *importCmd) Run(ctx context.Context, migCtx *migration.Context) error { 
 	return nil
 }
 
-func isMCP(host string) bool {
+func isAllowedImportTarget(host string) bool {
 	_, matches := profile.ParseMCPK8sURL(host)
 	if !matches {
 		_, _, matches = profile.ParseSpacesK8sURL(host)
 	}
-
+	if !matches {
+		matches = profile.ParseLocalHostURL(host)
+	}
 	return matches
 }

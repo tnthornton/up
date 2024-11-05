@@ -36,8 +36,8 @@ func (c *Cmd) AfterApply(kongCtx *kong.Context) error {
 }
 
 type Cmd struct {
-	Export exportCmd `cmd:"" help:"Export the current state of a Crossplane or Universal Crossplane control plane into an archive, preparing it for migration to Upbound Managed Control Planes."`
-	Import importCmd `cmd:"" help:"Import a previously exported control plane state into an Upbound managed control plane, completing the migration process."`
+	Export exportCmd `cmd:"" help:"The 'export' command is used to export the current state of a Crossplane or Universal Crossplane (xp/uxp) control plane into an archive file. This file can then be used for migration to Upbound Managed Control Planes."`
+	Import importCmd `cmd:"" help:"The 'import' command imports a control plane state from an archive file into an Upbound managed control plane."`
 
 	Kubeconfig string `type:"existingfile" help:"Override default kubeconfig path."`
 }
@@ -45,9 +45,9 @@ type Cmd struct {
 func (c *Cmd) Help() string {
 	return `
 The 'migration' command is designed to facilitate the seamless migration of control planes from Crossplane or Universal
-Crossplane (XP/UXP) environments to Upbound's Managed Control Planes. 
+Crossplane (XP/UXP) environments to Upbound's Managed Control Planes.
 
-This tool simplifies the process of transferring your existing Crossplane configurations and states into the Upbound
+This command simplifies the process of transferring your existing Crossplane configurations and states into the Upbound
 platform, ensuring a smooth transition with minimal downtime.
 
 For detailed information on each command and its options, use the '--help' flag with the specific command (e.g., 'up alpha migration export --help').

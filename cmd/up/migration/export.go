@@ -57,19 +57,13 @@ type exportCmd struct {
 
 func (c *exportCmd) Help() string {
 	return `
-Usage:
-    migration export [options]
-
-The 'export' command is used to export the current state of a Crossplane or Universal Crossplane (xp/uxp) control plane
-into an archive file. This file can then be used for migration to Upbound Managed Control Planes.
-
 Use the available options to customize the export process, such as specifying the output file path, including or excluding
 specific resources and namespaces, and deciding whether to pause managed resources before exporting.
 
 Examples:
 	migration export --pause-before-export
         Pauses all managed resources first and exports the control plane state to the default archive file named 'xp-state.tar.gz'.
-    
+
 	migration export --output=my-export.tar.gz
         Exports the control plane state to a specified file 'my-export.tar.gz'.
 
