@@ -125,11 +125,11 @@ type cli struct {
 	Completion kongplete.InstallCompletions `cmd:"" group:"Configure up" help:"Generate shell autocompletions"`
 	Ctx        ctx.Cmd                      `cmd:"" group:"Configure up" help:"Select an Upbound kubeconfig context."`
 	Help       helpCmd                      `cmd:"" group:"Configure up" help:"Show help."`
-	// License    licenseCmd                   `cmd:"" group:"Configure up" help:"Show license information."`
-	Profile profile.Cmd     `cmd:"" group:"Configure up" help:"Manage configuration profiles."`
-	Login   login.LoginCmd  `cmd:"" group:"Configure up" help:"Login to Upbound. Will attempt to launch a web browser by default. Use --username and --password flags for automations."`
-	Logout  login.LogoutCmd `cmd:"" group:"Configure up" help:"Logout of Upbound."`
-	Version v.Cmd           `cmd:"" group:"Configure up" help:"Show current version."`
+	License    licenseCmd                   `cmd:"" group:"Configure up" help:"Show license information."`
+	Profile    profile.Cmd                  `cmd:"" group:"Configure up" help:"Manage configuration profiles."`
+	Login      login.LoginCmd               `cmd:"" group:"Configure up" help:"Login to Upbound. Will attempt to launch a web browser by default. Use --username and --password flags for automations."`
+	Logout     login.LogoutCmd              `cmd:"" group:"Configure up" help:"Logout of Upbound."`
+	Version    v.Cmd                        `cmd:"" group:"Configure up" help:"Show current version."`
 
 	Alpha alpha `cmd:"" group:"Alpha" help:"Alpha features. Commands may be removed in future releases."`
 }
