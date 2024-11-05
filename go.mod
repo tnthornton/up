@@ -61,7 +61,6 @@ require (
 	k8s.io/utils v0.0.0-20240102154912-e7106e64919e
 	sigs.k8s.io/controller-runtime v0.18.2
 	sigs.k8s.io/e2e-framework v0.3.0
-	sigs.k8s.io/kind v0.20.0
 	sigs.k8s.io/yaml v1.4.0
 )
 
@@ -81,7 +80,6 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage v1.3.0 // indirect
 	github.com/Microsoft/hcsshim v0.12.3 // indirect
 	github.com/alecthomas/repr v0.4.0 // indirect
-	github.com/alessio/shellescape v1.4.2 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.1 // indirect
@@ -97,7 +95,6 @@ require (
 	github.com/external-secrets/external-secrets v0.9.13 // indirect
 	github.com/go-sql-driver/mysql v1.7.1 // indirect
 	github.com/golang-jwt/jwt/v5 v5.2.1 // indirect
-	github.com/google/safetext v0.0.0-20220905092116-b49f7bc46da2 // indirect
 	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0 // indirect
 	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.1-0.20210315223345-82c243799c99 // indirect
 	github.com/hexops/gotextdiff v1.0.3 // indirect
@@ -115,7 +112,6 @@ require (
 	github.com/muesli/roff v0.1.0 // indirect
 	github.com/onsi/ginkgo/v2 v2.19.1 // indirect
 	github.com/onsi/gomega v1.34.1 // indirect
-	github.com/pelletier/go-toml v1.9.5 // indirect
 	github.com/pjbgf/sha1cd v0.3.0 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/redis/go-redis/v9 v9.3.0 // indirect
