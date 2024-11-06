@@ -56,10 +56,8 @@ type ProjectPackageMetadata struct {
 // ProjectPaths configures the locations of various parts of the project, for
 // use at build time.
 type ProjectPaths struct {
-	// APIs is the directory holding the project's APIs (composite resource
-	// definitions and compositions). If not specified, the builder will search
-	// the whole project directory tree for APIs, excluding the functions and
-	// examples directories.
+	// APIs is the directory holding the project's apis. If not
+	// specified, it defaults to `apis/`.
 	APIs string `json:"apis,omitempty"`
 	// Functions is the directory holding the project's functions. If not
 	// specified, it defaults to `functions/`.
