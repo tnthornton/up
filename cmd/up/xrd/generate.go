@@ -23,11 +23,12 @@ import (
 
 	"github.com/alecthomas/kong"
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
-	v1 "github.com/crossplane/crossplane/apis/apiextensions/v1"
 	"github.com/gobuffalo/flect"
 	"github.com/pterm/pterm"
 	"github.com/spf13/afero"
+	"golang.org/x/sync/errgroup"
 
+	"github.com/upbound/up/internal/async"
 	"github.com/upbound/up/internal/project"
 	projectv1alpha1 "github.com/upbound/up/pkg/apis/project/v1alpha1"
 
@@ -37,22 +38,27 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
+	"github.com/upbound/up/internal/xpkg/dep/cache"
+	"github.com/upbound/up/internal/xpkg/dep/manager"
+	"github.com/upbound/up/internal/xpkg/dep/resolver/image"
+	"github.com/upbound/up/internal/xpkg/schemagenerator"
+	"github.com/upbound/up/internal/xpkg/schemarunner"
 	"github.com/upbound/up/internal/yaml"
 )
 
 func (c *generateCmd) Help() string {
 	return `
-The 'generate' command is used to create a Composite Resource Definition (XRD).
+The 'generate' command creates a CompositeResourceDefinition (XRD) from a given Composite Resource (XR) or Composite Resource Claim (XRC) and generates associated language models for function usage.
 
-Examples:
+Usage Examples:
     xrd generate examples/cluster/example.yaml
-        Generates a CompositeResourceDefinition (XRD) from a Composite Resource (XR) or Composite Resource Claim (XRC) and saves it to the project's default APIs folder.
+        Generates a CompositeResourceDefinition (XRD) based on the specified Composite Resource or Claim and saves it to the default APIs folder in the project.
 
     xrd generate examples/postgres/example.yaml --plural postgreses
-        Generates a CompositeResourceDefinition (XRD) with a specified plural form for cases where automatic pluralization may be incorrect (e.g., "postgress").
+        Generates a CompositeResourceDefinition (XRD) with a specified plural form, useful for cases where automatic pluralization may not be accurate (e.g., "postgres").
 
     xrd generate examples/postgres/example.yaml --path database/definition.yaml
-        Generates a CompositeResourceDefinition (XRD) and saves it to a custom file path inside the project's default APIs folder.
+        Generates a CompositeResourceDefinition (XRD) and saves it to a custom path within the project's default APIs folder.
 `
 }
 
@@ -70,16 +76,22 @@ type inputYAML struct {
 }
 
 type generateCmd struct {
-	File   string `arg:"" help:"Path to the file containing the Composite Resource (XR) or Composite Resource Claim (XRC)."`
-	Path   string `help:"Path to the output file where the Composite Resource Definition (XRD) will be saved." optional:""`
-	Plural string `help:"Optional custom plural form for the Composite Resource Definition (XRD)." optional:""`
-	Output string `help:"Output format for the results: 'file' to save to a file, 'yaml' to print XRD in YAML format, 'json' to print XRD in JSON format." short:"o" default:"file" enum:"file,yaml,json"`
+	File     string `arg:"" help:"Path to the file containing the Composite Resource (XR) or Composite Resource Claim (XRC)."`
+	CacheDir string `short:"d" help:"Directory used for caching dependency images." default:"~/.up/cache/" env:"CACHE_DIR" type:"path"`
+	Path     string `help:"Path to the output file where the Composite Resource Definition (XRD) will be saved." optional:""`
+	Plural   string `help:"Optional custom plural form for the Composite Resource Definition (XRD)." optional:""`
+	Output   string `help:"Output format for the results: 'file' to save to a file, 'yaml' to print XRD in YAML format, 'json' to print XRD in JSON format." short:"o" default:"file" enum:"file,yaml,json"`
 
 	ProjectFile string `short:"f" help:"Path to project definition file." default:"upbound.yaml"`
 
-	projFS afero.Fs
-	apisFS afero.Fs
-	proj   *projectv1alpha1.Project
+	projFS   afero.Fs
+	apisFS   afero.Fs
+	modelsFS afero.Fs
+	proj     *projectv1alpha1.Project
+	relFile  string
+
+	schemarunner schemarunner.RealSchemaRunner
+	m            *manager.Manager
 }
 
 // AfterApply constructs and binds Upbound-specific context to any subcommands
@@ -95,6 +107,7 @@ func (c *generateCmd) AfterApply(kongCtx *kong.Context, p pterm.TextPrinter) err
 	}
 	// The location of the project file defines the root of the project.
 	projDirPath := filepath.Dir(projFilePath)
+	c.modelsFS = afero.NewBasePathFs(afero.NewOsFs(), filepath.Join(projDirPath, ".up"))
 	c.projFS = afero.NewBasePathFs(afero.NewOsFs(), projDirPath)
 
 	// The location of the co position defines the root of the xrd.
@@ -109,6 +122,43 @@ func (c *generateCmd) AfterApply(kongCtx *kong.Context, p pterm.TextPrinter) err
 		c.projFS, proj.Spec.Paths.APIs,
 	)
 
+	c.relFile = c.File
+	if filepath.IsAbs(c.File) {
+		// Convert the absolute path to a relative path within projFS
+		relPath, err := filepath.Rel(afero.FullBaseFsPath(c.projFS.(*afero.BasePathFs), "."), c.File)
+		if err != nil {
+			return errors.Wrap(err, "failed to make file path relative to project filesystem")
+		}
+
+		// Check if relPath is within c.projFS
+		if strings.HasPrefix(relPath, "..") || filepath.IsAbs(relPath) {
+			return errors.New("file path is outside the project filesystem")
+		}
+
+		c.relFile = relPath
+	}
+
+	fs := afero.NewOsFs()
+
+	cache, err := cache.NewLocal(c.CacheDir, cache.WithFS(fs))
+	if err != nil {
+		return err
+	}
+
+	r := image.NewResolver()
+
+	m, err := manager.New(
+		manager.WithCacheModels(c.modelsFS),
+		manager.WithCache(cache),
+		manager.WithResolver(r),
+	)
+
+	if err != nil {
+		return err
+	}
+
+	c.m = m
+
 	// workaround interfaces not being bindable ref: https://github.com/alecthomas/kong/issues/48
 	kongCtx.BindTo(ctx, (*context.Context)(nil))
 	return nil
@@ -116,9 +166,9 @@ func (c *generateCmd) AfterApply(kongCtx *kong.Context, p pterm.TextPrinter) err
 
 func (c *generateCmd) Run(ctx context.Context, p pterm.TextPrinter) error { // nolint:gocyclo
 	pterm.EnableStyling()
-	yamlData, err := afero.ReadFile(c.projFS, c.File)
+	yamlData, err := afero.ReadFile(c.projFS, c.relFile)
 	if err != nil {
-		return errors.Wrap(err, "failed to read input file")
+		return errors.Wrapf(err, "failed to read file in %s", afero.FullBaseFsPath(c.projFS.(*afero.BasePathFs), c.relFile))
 	}
 
 	xrd, err := newXRD(yamlData, c.Plural)
@@ -167,6 +217,42 @@ func (c *generateCmd) Run(ctx context.Context, p pterm.TextPrinter) error { // n
 
 		if err := afero.WriteFile(c.apisFS, filePath, xrdYAML, 0644); err != nil {
 			return errors.Wrap(err, "failed to write CompositeResourceDefinition (XRD) to file")
+		}
+
+		// In parallel:
+		// * Generate schemas for XRDs
+		if err = async.WrapWithSuccessSpinners(func(ch async.EventChannel) error {
+			eg, ctx := errgroup.WithContext(ctx)
+
+			eg.Go(func() error {
+				var err error
+				kfs, err := schemagenerator.GenerateSchemaKcl(ctx, c.apisFS, []string{}, c.schemarunner)
+				if err != nil {
+					return err
+				}
+
+				if err := c.m.AddModels("kcl", kfs); err != nil {
+					return err
+				}
+				return err
+			})
+
+			eg.Go(func() error {
+				var err error
+				pfs, err := schemagenerator.GenerateSchemaPython(ctx, c.apisFS, []string{}, c.schemarunner)
+				if err != nil {
+					return err
+				}
+
+				if err := c.m.AddModels("python", pfs); err != nil {
+					return err
+				}
+				return err
+			})
+
+			return eg.Wait()
+		}); err != nil {
+			return err
 		}
 
 		p.Printfln("Successfully created CompositeResourceDefinition (XRD) and saved to %s", afero.FullBaseFsPath(c.apisFS.(*afero.BasePathFs), filePath))
