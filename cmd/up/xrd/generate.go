@@ -90,7 +90,7 @@ type generateCmd struct {
 	proj     *projectv1alpha1.Project
 	relFile  string
 
-	schemarunner schemarunner.RealSchemaRunner
+	schemarunner schemarunner.SchemaRunner
 	m            *manager.Manager
 }
 
@@ -158,6 +158,8 @@ func (c *generateCmd) AfterApply(kongCtx *kong.Context, p pterm.TextPrinter) err
 	}
 
 	c.m = m
+
+	c.schemarunner = schemarunner.RealSchemaRunner{}
 
 	// workaround interfaces not being bindable ref: https://github.com/alecthomas/kong/issues/48
 	kongCtx.BindTo(ctx, (*context.Context)(nil))
