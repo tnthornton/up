@@ -24,6 +24,7 @@ import (
 	"github.com/pterm/pterm"
 	"github.com/spf13/afero"
 
+	"github.com/upbound/up/internal/project"
 	"github.com/upbound/up/internal/xpkg"
 	"github.com/upbound/up/internal/xpkg/dep"
 	"github.com/upbound/up/internal/xpkg/dep/cache"
@@ -82,7 +83,13 @@ func (c *addCmd) AfterApply(kongCtx *kong.Context, p pterm.TextPrinter) error {
 	}
 	// The location of the project file defines the root of the project.
 	projDirPath := filepath.Dir(projFilePath)
+	projFS := afero.NewBasePathFs(afero.NewOsFs(), projDirPath)
 	c.modelsFS = afero.NewBasePathFs(afero.NewOsFs(), filepath.Join(projDirPath, ".up"))
+
+	_, err = project.Parse(projFS, c.ProjectFile)
+	if err != nil {
+		return errors.New("this is not a project directory")
+	}
 
 	fs := afero.NewOsFs()
 
