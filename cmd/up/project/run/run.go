@@ -60,9 +60,6 @@ import (
 )
 
 const (
-	// TODO(adamwg): Once the package manager changes are in a release channel,
-	// we can stop manually setting the version.
-	devCrossplaneVersion = "1.18.0-up.1.rc.0.5.gb90fb80"
 	// TODO(adamwg): It would be nice if we had a const for this somewhere else.
 	devControlPlaneClass = "small"
 )
@@ -406,9 +403,12 @@ func (c *Cmd) createControlPlane(ctx context.Context, cl client.Client, ch async
 		Spec: spacesv1beta1.ControlPlaneSpec{
 			Crossplane: spacesv1beta1.CrossplaneSpec{
 				AutoUpgradeSpec: &spacesv1beta1.CrossplaneAutoUpgradeSpec{
-					Channel: ptr.To(spacesv1beta1.CrossplaneUpgradeNone),
+					// TODO(adamwg): For now, dev MCPs always use the rapid
+					// channel because they require Crossplane features that are
+					// only present in 1.18+. We can stop hard-coding this later
+					// when other channels are upgraded.
+					Channel: ptr.To(spacesv1beta1.CrossplaneUpgradeRapid),
 				},
-				Version: ptr.To(devCrossplaneVersion),
 			},
 			Class: devControlPlaneClass,
 		},
