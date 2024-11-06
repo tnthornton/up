@@ -17,21 +17,51 @@ package example
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 
+	"github.com/alecthomas/kong"
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
 	v1 "github.com/crossplane/crossplane/apis/apiextensions/v1"
 	"github.com/crossplane/crossplane/xcrd"
 	"github.com/pterm/pterm"
+	"github.com/spf13/afero"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	icrd "github.com/upbound/up/internal/crd"
+	"github.com/upbound/up/internal/project"
 	"github.com/upbound/up/internal/yaml"
 )
+
+func (c *generateCmd) Help() string {
+	return `
+The 'generate' command is used to create an Composite Resource (XR) or Composite Resource Claim (XRC) resource.
+
+Examples:
+
+    example generate
+        Creates an Composite Resource (XR) or Composite Resource Claim (XRC) resource. All necessary inputs will be collected interactively
+        and saved in the 'example' project directory.
+
+    example generate --name example --namespace default
+        Sets the metadata name and namespace. All other inputs will be collected interactively
+        and saved in the 'example' project directory.
+
+    example generate --type claim --api-group acme.comp --api-version v1beta1 --kind Cluster --name example
+        Creates a Composite Resource Claim (XRC) with specified api-group, api-version, kind, and metadata name. All additional inputs
+        will be collected interactively and saved in the 'example' project directory.
+
+    example generate apis/xnetworks/definition.yaml
+        Generates an Composite Resource (XR) or Composite Resource Claim (XRC) from an CompositeResourceDefinition (XRD) definition. Necessary inputs are collected interactively,
+        with default values and enums to scaffold a functional skeleton, saved in the 'example' project directory.
+
+    example generate apis/xnetworks/definition.yaml --type xr
+        Creates an Composite Resource (XR) from an CompositeResourceDefinition (XRD) definition with default values and enums to scaffold a functional skeleton,
+        saved in the 'example' project directory.
+`
+}
 
 const (
 	outputFile = "file"
@@ -63,15 +93,67 @@ type generateCmd struct {
 	Name       string `help:"Specifies the Name of the resource."`
 	Namespace  string `help:"Specifies the Namespace of the resource."`
 
-	XRDFilePath string `arg:"" optional:"" help:"Specifies the path to the Composite Resource Definition (XRD) file used to generate an example resource."`
+	XRDFilePath    string `arg:"" optional:"" help:"Specifies the path to the Composite Resource Definition (XRD) file used to generate an example resource."`
+	relXrdFilePath string
+	ProjectFile    string `short:"f" help:"Path to project definition file." default:"upbound.yaml"`
+
+	projFS    afero.Fs
+	exampleFS afero.Fs
+}
+
+// AfterApply constructs and binds Upbound-specific context to any subcommands
+// that have Run() methods that receive it.
+func (c *generateCmd) AfterApply(kongCtx *kong.Context, p pterm.TextPrinter) error {
+	kongCtx.Bind(pterm.DefaultBulletList.WithWriter(kongCtx.Stdout))
+	ctx := context.Background()
+
+	// Read the project file.
+	projFilePath, err := filepath.Abs(c.ProjectFile)
+	if err != nil {
+		return err
+	}
+	// The location of the project file defines the root of the project.
+	projDirPath := filepath.Dir(projFilePath)
+	c.projFS = afero.NewBasePathFs(afero.NewOsFs(), projDirPath)
+
+	// The location of the co position defines the root of the xrd.
+	proj, err := project.Parse(c.projFS, c.ProjectFile)
+	if err != nil {
+		return err
+	}
+
+	c.exampleFS = afero.NewBasePathFs(
+		c.projFS, proj.Spec.Paths.Examples,
+	)
+
+	c.relXrdFilePath = c.XRDFilePath
+	if filepath.IsAbs(c.relXrdFilePath) {
+		// Convert the absolute path to a relative path within projFS
+		relPath, err := filepath.Rel(afero.FullBaseFsPath(c.projFS.(*afero.BasePathFs), "."), c.relXrdFilePath)
+		if err != nil {
+			return errors.Wrap(err, "failed to make file path relative to project filesystem")
+		}
+
+		// Check if relPath is within c.projFS
+		if strings.HasPrefix(relPath, "..") || filepath.IsAbs(relPath) {
+			return errors.New("file path is outside the project filesystem")
+		}
+
+		c.relXrdFilePath = relPath
+	}
+
+	// workaround interfaces not being bindable ref: https://github.com/alecthomas/kong/issues/48
+	kongCtx.BindTo(ctx, (*context.Context)(nil))
+	return nil
 }
 
 func (c *generateCmd) Run(ctx context.Context) error {
+	pterm.EnableStyling()
 	// get xr or xrc/claim as input otherwise ask interactive
 	if c.Type == "" {
 		c.Type = c.getInteractiveType()
 	}
-	if len(c.XRDFilePath) > 0 {
+	if len(c.relXrdFilePath) > 0 {
 		return c.processXRDFile()
 	}
 	return c.processInput()
@@ -101,9 +183,9 @@ func (c *generateCmd) processXRDFile() error {
 func (c *generateCmd) readXRDFile() (v1.CompositeResourceDefinition, error) {
 	var xrd v1.CompositeResourceDefinition
 
-	xrdRaw, err := os.ReadFile(c.XRDFilePath)
+	xrdRaw, err := afero.ReadFile(c.projFS, c.relXrdFilePath)
 	if err != nil {
-		return xrd, errors.Wrapf(err, "failed to read XRD file at %s", c.XRDFilePath)
+		return xrd, errors.Wrapf(err, "failed to read file in %s", afero.FullBaseFsPath(c.projFS.(*afero.BasePathFs), c.relXrdFilePath))
 	}
 
 	err = yaml.Unmarshal(xrdRaw, &xrd)
@@ -363,7 +445,7 @@ func (c *generateCmd) createResource(resourceType, compositeName, apiGroup, apiV
 }
 
 // outputResource handles the output of the generated resource based on the specified output type
-func (c *generateCmd) outputResource(res resource) error {
+func (c *generateCmd) outputResource(res resource) error { // nolint:gocyclo
 	// Convert resource to YAML format
 	resourceYAML, err := yaml.Marshal(res)
 	if err != nil {
@@ -374,19 +456,40 @@ func (c *generateCmd) outputResource(res resource) error {
 	case outputFile:
 		filePath := c.Path
 		if filePath == "" {
-			filePath = fmt.Sprintf("examples/%s/%s.yaml", strings.ToLower(res.Kind), strings.ToLower(res.ObjectMeta.Name))
+			filePath = fmt.Sprintf("%s/%s.yaml", strings.ToLower(res.Kind), strings.ToLower(res.ObjectMeta.Name))
 		}
 
-		outputDir := filepath.Dir(filepath.Clean(filePath))
-		if err := os.MkdirAll(outputDir, 0750); err != nil {
-			return errors.Wrapf(err, "failed to create output directory")
+		// Check if the example file already exists
+		exists, err := afero.Exists(c.exampleFS, filePath)
+		if err != nil {
+			return errors.Wrap(err, "failed to check if file exists")
 		}
 
-		if err := os.WriteFile(filePath, resourceYAML, 0644); err != nil { // nolint:gosec // writing to file
-			return errors.Wrapf(err, "failed to write resource to file")
+		if exists {
+			// Prompt the user for confirmation to merge
+			pterm.Println() // Blank line for spacing
+			confirm := pterm.DefaultInteractiveConfirm
+			confirm.DefaultText = fmt.Sprintf("The example file '%s' already exists. Do you want to override its contents?", afero.FullBaseFsPath(c.exampleFS.(*afero.BasePathFs), filePath))
+			confirm.DefaultValue = false
+
+			result, _ := confirm.Show() // Display confirmation prompt
+			pterm.Println()             // Blank line for spacing
+
+			if !result {
+				return errors.New("operation cancelled by user")
+			}
 		}
 
-		pterm.Printfln("Successfully created resource and saved to %s", filePath)
+		if err := c.exampleFS.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+			return errors.Wrap(err, "failed to create directories for the specified output path")
+		}
+
+		if err := afero.WriteFile(c.exampleFS, filePath, resourceYAML, 0644); err != nil {
+			return errors.Wrap(err, "failed to write example to file")
+		}
+
+		pterm.Printfln("Successfully created example and saved to %s", afero.FullBaseFsPath(c.exampleFS.(*afero.BasePathFs), filePath))
+
 	case outputYAML:
 		pterm.Println(string(resourceYAML))
 	case outputJSON:
