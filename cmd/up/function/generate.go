@@ -114,6 +114,9 @@ pydantic==2.9.2
 
 const pythonMainTemplate = `from crossplane.function import resource
 from crossplane.function.proto.v1 import run_function_pb2 as fnv1
+# Example to add models as import; update as needed
+# from model.io.upbound.aws.s3.bucket import v1beta1 as bucketv1beta1
+
 
 def compose(req: fnv1.RunFunctionRequest, rsp: fnv1.RunFunctionResponse):
     pass
