@@ -26,8 +26,7 @@ import (
 
 // Marshal uses the Kubernetes yaml library to marshal the given object to YAML,
 // first removing the metadata.creationTimestamp field if it is present and
-// null. An error will be returned if the object is not Kubernetes-like (i.e.,
-// it must have metadata).
+// null. Additional fields may be removed by passing options.
 func Marshal(obj any, opts ...MarshalOption) ([]byte, error) {
 	cfg := defaultMarshalOptions
 	for _, opt := range opts {
