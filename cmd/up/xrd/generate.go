@@ -179,7 +179,7 @@ func (c *generateCmd) Run(ctx context.Context, p pterm.TextPrinter) error { // n
 	}
 
 	// Convert XRD to YAML format
-	xrdYAML, err := yaml.Marshal(xrd)
+	xrdYAML, err := yaml.Marshal(xrd, yaml.RemoveField("status"))
 	if err != nil {
 		return errors.Wrap(err, "failed to marshal XRD to YAML")
 	}
