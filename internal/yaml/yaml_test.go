@@ -40,9 +40,15 @@ type objectWithCreationTimestamp struct {
 	metav1.ObjectMeta `json:"metadata"`
 }
 
+type objectWithNestedFields struct {
+	metav1.ObjectMeta `json:"metadata"`
+	TopLevel          *objectWithoutMetadata `yaml:"topLevel"`
+}
+
 func TestMarshal(t *testing.T) {
 	tcs := map[string]struct {
 		input        any
+		opts         []MarshalOption
 		expectedYAML string
 	}{
 		"NoMetadata": {
@@ -106,13 +112,49 @@ fieldB: world
   namespace: world
 `,
 		},
+		"RemoveField": {
+			input: objectWithNestedFields{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "hello",
+					Namespace: "world",
+				},
+				TopLevel: &objectWithoutMetadata{
+					FieldA: "hello",
+					FieldB: "world",
+				},
+			},
+			opts: []MarshalOption{
+				RemoveField("topLevel.fieldA"),
+			},
+			expectedYAML: `metadata:
+  name: hello
+  namespace: world
+topLevel:
+  fieldB: world
+`,
+		},
+		"RemoveFieldIfNil": {
+			input: objectWithNestedFields{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "hello",
+					Namespace: "world",
+				},
+			},
+			opts: []MarshalOption{
+				RemoveFieldIfNil("topLevel"),
+			},
+			expectedYAML: `metadata:
+  name: hello
+  namespace: world
+`,
+		},
 	}
 
 	for name, tc := range tcs {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			bs, err := Marshal(tc.input)
+			bs, err := Marshal(tc.input, tc.opts...)
 			assert.NilError(t, err)
 			assert.Equal(t, string(bs), tc.expectedYAML)
 		})
