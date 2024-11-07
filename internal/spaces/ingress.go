@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/pem"
+	"sync"
 
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
@@ -45,6 +46,8 @@ type IngressReader interface {
 var _ IngressReader = &ingressCache{}
 
 type ingressCache struct {
+	mu sync.RWMutex
+
 	// ingresses contains a map of a space's namespaced name to its
 	// corresponding ingress configuration
 	ingresses map[types.NamespacedName]SpaceIngress
@@ -59,11 +62,26 @@ func NewCachedReader(bearer string) *ingressCache {
 	}
 }
 
-func (c *ingressCache) Get(ctx context.Context, space v1alpha1.Space) (ingress *SpaceIngress, err error) {
-	nsn := types.NamespacedName{Name: space.Name, Namespace: space.Namespace}
+func (c *ingressCache) cacheGet(space v1alpha1.Space) (SpaceIngress, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 
+	nsn := types.NamespacedName{Name: space.Name, Namespace: space.Namespace}
+	ingress, found := c.ingresses[nsn]
+	return ingress, found
+}
+
+func (c *ingressCache) cachePut(space v1alpha1.Space, ingress SpaceIngress) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	nsn := types.NamespacedName{Name: space.Name, Namespace: space.Namespace}
+	c.ingresses[nsn] = ingress
+}
+
+func (c *ingressCache) Get(ctx context.Context, space v1alpha1.Space) (ingress *SpaceIngress, err error) {
 	// cache hit
-	if i, ok := c.ingresses[nsn]; ok {
+	if i, ok := c.cacheGet(space); ok {
 		return &i, nil
 	}
 
@@ -101,7 +119,7 @@ func (c *ingressCache) Get(ctx context.Context, space v1alpha1.Space) (ingress *
 		ingress.CAData = []byte(caString)
 	}
 
-	c.ingresses[nsn] = *ingress
+	c.cachePut(space, *ingress)
 
 	return ingress, err
 }
