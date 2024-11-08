@@ -162,12 +162,16 @@ type alpha struct {
 	Ctx           ctx.Cmd           `cmd:"" maturity:"alpha" help:"Select an Upbound kubeconfig context."`
 }
 
+const helpDescription = `The Upbound CLI.
+
+Please report issues and feature requests at https://github.com/upbound/upbound.`
+
 func main() {
 	c := cli{}
 
 	parser := kong.Must(&c,
 		kong.Name("up"),
-		kong.Description("The Upbound CLI"),
+		kong.Description(helpDescription),
 		kong.ConfigureHelp(kong.HelpOptions{
 			Compact:             true,
 			NoExpandSubcommands: true,
